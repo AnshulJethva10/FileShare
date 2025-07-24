@@ -115,3 +115,15 @@ CREATE TABLE files (
     download_count INTEGER DEFAULT 0
 );
 ```
+
+## TODO
+
+### 🔒 Security Enhancements
+- [ ] **File Encryption**: Implement AES-256 encryption for uploaded files
+  - [ ] Encrypt files at rest using unique keys per file
+  - [ ] Automatic decryption on download
+
+- [ ] **Authentication & Authorization**
+  - [x] User registration and login system
+  - [x] Session-based authentication
+  - [ ] Role-based access control (Admin/User)
