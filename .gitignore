@@ -84,3 +84,7 @@ secrets.json
 # Temporary files
 *.tmp
 *.temp
+
+# Extra files
+encrypt.py
+HelloWorld.txt

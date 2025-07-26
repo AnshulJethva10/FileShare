@@ -27,6 +27,10 @@ class Config:
     # Allowed file extensions
     ALLOWED_EXTENSIONS = os.environ.get('ALLOWED_EXTENSIONS', 'txt,pdf,png,jpg,jpeg,gif,doc,docx,xls,xlsx,ppt,pptx,zip,rar').split(',')
     
+    # Encryption settings
+    ENABLE_ENCRYPTION = os.environ.get('ENABLE_ENCRYPTION', 'True').lower() == 'true'
+    ENCRYPTION_MASTER_KEY = os.environ.get('ENCRYPTION_MASTER_KEY', 'default-change-in-production')
+    
     # Server settings
     HOST = os.environ.get('HOST', '127.0.0.1')
     PORT = int(os.environ.get('PORT', 5000))

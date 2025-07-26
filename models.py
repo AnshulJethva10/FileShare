@@ -119,6 +119,21 @@ class FileModel:
                 # Table doesn't exist, create it
                 pass
         
+        # Check and add encryption columns if they don't exist
+        encryption_columns = ['is_encrypted', 'encryption_salt', 'encryption_method']
+        for col in encryption_columns:
+            if col not in columns:
+                try:
+                    if col == 'is_encrypted':
+                        cursor.execute(f'ALTER TABLE files ADD COLUMN {col} BOOLEAN DEFAULT 0')
+                    elif col == 'encryption_method':
+                        cursor.execute(f'ALTER TABLE files ADD COLUMN {col} TEXT DEFAULT "none"')
+                    else:
+                        cursor.execute(f'ALTER TABLE files ADD COLUMN {col} TEXT')
+                    print(f"Added {col} column to files table")
+                except sqlite3.OperationalError:
+                    pass
+        
         # Create or update the files table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS files (
@@ -130,20 +145,26 @@ class FileModel:
                 user_id INTEGER NOT NULL DEFAULT 1,
                 upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 download_count INTEGER DEFAULT 0,
+                is_encrypted BOOLEAN DEFAULT 0,
+                encryption_salt TEXT,
+                encryption_method TEXT DEFAULT "none",
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         ''')
         conn.commit()
         conn.close()
     
-    def add_file(self, filename, original_filename, file_size, file_hash, user_id):
-        """Add a new file record to the database"""
+    def add_file(self, filename, original_filename, file_size, file_hash, user_id, 
+                 is_encrypted=False, encryption_salt=None, encryption_method="none"):
+        """Add a new file record to the database with encryption metadata"""
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO files (filename, original_filename, file_size, file_hash, user_id)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (filename, original_filename, file_size, file_hash, user_id))
+            INSERT INTO files (filename, original_filename, file_size, file_hash, user_id, 
+                             is_encrypted, encryption_salt, encryption_method)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (filename, original_filename, file_size, file_hash, user_id, 
+              is_encrypted, encryption_salt, encryption_method))
         file_id = cursor.lastrowid
         conn.commit()
         conn.close()
@@ -165,16 +186,30 @@ class FileModel:
         """Get a specific file by ID, optionally filtered by user"""
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
+        
+        # Check if encryption columns exist in the table
+        cursor.execute("PRAGMA table_info(files)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        # Build SELECT query based on available columns
+        base_columns = "id, filename, original_filename, file_size, file_hash, user_id, upload_date, download_count"
+        
+        if 'is_encrypted' in columns and 'encryption_salt' in columns and 'encryption_method' in columns:
+            select_columns = f"{base_columns}, is_encrypted, encryption_salt, encryption_method"
+        else:
+            select_columns = f"{base_columns}, 0 as is_encrypted, NULL as encryption_salt, 'none' as encryption_method"
+        
         if user_id:
-            cursor.execute('''
-                SELECT id, filename, original_filename, file_size, file_hash
+            cursor.execute(f'''
+                SELECT {select_columns}
                 FROM files WHERE id = ? AND user_id = ?
             ''', (file_id, user_id))
         else:
-            cursor.execute('''
-                SELECT id, filename, original_filename, file_size, file_hash
+            cursor.execute(f'''
+                SELECT {select_columns}
                 FROM files WHERE id = ?
             ''', (file_id,))
+        
         file_record = cursor.fetchone()
         conn.close()
         return file_record

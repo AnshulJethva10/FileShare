@@ -1,6 +1,7 @@
 """
 Route handlers for the File Sharing Application
 """
+import os
 from flask import Blueprint, request, render_template_string, redirect, url_for, send_file, flash, jsonify, current_app, session
 from services import FileService
 from templates import HTML_TEMPLATE
@@ -18,7 +19,8 @@ def init_routes(app):
     global file_service
     file_service = FileService(
         upload_folder=app.config['UPLOAD_FOLDER'],
-        db_name=app.config['DATABASE_NAME']
+        db_name=app.config['DATABASE_NAME'],
+        enable_encryption=app.config.get('ENABLE_ENCRYPTION', True)
     )
 
 @main.route('/')
@@ -62,7 +64,7 @@ def dashboard():
 @main.route('/download/<int:file_id>')
 @login_required
 def download_file(file_id):
-    """Download a file by ID"""
+    """Download a file by ID with decryption support"""
     user_id = session['user_id']
     file_info, error = file_service.get_file_for_download(file_id, user_id)
     
@@ -70,11 +72,26 @@ def download_file(file_id):
         flash(error, 'error')
         return redirect(url_for('main.dashboard'))
     
-    return send_file(
-        file_info['filepath'], 
-        as_attachment=True, 
-        download_name=file_info['original_filename']
-    )
+    try:
+        response = send_file(
+            file_info['filepath'], 
+            as_attachment=True, 
+            download_name=file_info['original_filename']
+        )
+        
+        # Clean up temporary decrypted file after sending
+        if file_info.get('is_temp', False):
+            import atexit
+            atexit.register(lambda: os.remove(file_info['filepath']) if os.path.exists(file_info['filepath']) else None)
+        
+        return response
+        
+    except Exception as e:
+        # Clean up temp file if error occurs
+        if file_info.get('is_temp', False) and os.path.exists(file_info['filepath']):
+            os.remove(file_info['filepath'])
+        flash(f'Error downloading file: {str(e)}', 'error')
+        return redirect(url_for('main.dashboard'))
 
 @main.route('/delete/<int:file_id>')
 @login_required
