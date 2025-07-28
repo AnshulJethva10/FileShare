@@ -130,6 +130,62 @@ class SecureFileEncryption:
         """Verify file integrity using stored hash"""
         actual_hash = hashlib.sha256(decrypted_data).hexdigest()
         return actual_hash == expected_hash
+    
+    def generate_share_key(self):
+        """Generate a random key for file sharing"""
+        return os.urandom(32)  # 256-bit key for AES-256
+    
+    def encrypt_data(self, data, key):
+        """Encrypt data with given key and return encrypted data, salt, nonce"""
+        try:
+            # Generate salt and nonce
+            salt = os.urandom(16)
+            nonce = os.urandom(12)  # GCM recommended nonce size
+            
+            # Create cipher
+            cipher = Cipher(
+                algorithms.AES(key),
+                modes.GCM(nonce),
+                backend=default_backend()
+            )
+            encryptor = cipher.encryptor()
+            
+            # Encrypt and get authentication tag
+            ciphertext = encryptor.update(data) + encryptor.finalize()
+            auth_tag = encryptor.tag
+            
+            # Combine nonce + auth_tag + ciphertext
+            encrypted_data = nonce + auth_tag + ciphertext
+            
+            return encrypted_data, base64.b64encode(salt).decode('utf-8'), base64.b64encode(nonce).decode('utf-8')
+            
+        except Exception as e:
+            print(f"Data encryption error: {e}")
+            return None, None, None
+    
+    def decrypt_data(self, encrypted_data, key, salt_b64, nonce_b64):
+        """Decrypt data with given key, salt, and nonce"""
+        try:
+            # Extract components from encrypted data
+            nonce = encrypted_data[:12]
+            auth_tag = encrypted_data[12:28]
+            ciphertext = encrypted_data[28:]
+            
+            # Create cipher
+            cipher = Cipher(
+                algorithms.AES(key),
+                modes.GCM(nonce, auth_tag),
+                backend=default_backend()
+            )
+            decryptor = cipher.decryptor()
+            
+            # Decrypt and verify authentication
+            plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+            return plaintext
+            
+        except Exception as e:
+            print(f"Data decryption error: {e}")
+            return None
 
 # Backward compatibility with your existing encrypt.py
 def encrypt_file_legacy(input_file, output_file):

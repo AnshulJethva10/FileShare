@@ -6,6 +6,7 @@ from config import config
 from models import FileModel, UserModel
 from routes import main, init_routes
 from auth_routes import auth
+from sharing_routes import sharing, init_sharing_routes
 
 def create_app(config_name='default'):
     """Create and configure the Flask application"""
@@ -24,9 +25,11 @@ def create_app(config_name='default'):
     
     # Initialize routes
     init_routes(app)
+    init_sharing_routes(app)
     
     # Register blueprints
     app.register_blueprint(auth, url_prefix='/auth')
+    app.register_blueprint(sharing)
     app.register_blueprint(main)
     
     return app

@@ -107,8 +107,7 @@ HTML_TEMPLATE = '''
             </div>
             <nav class="hidden md:flex space-x-6">
                 <a href="{{ url_for('main.dashboard') }}" class="text-primary font-medium hover:text-secondary">Home</a>
-                <a href="#" class="text-gray-600 hover:text-primary">Files</a>
-                <a href="#" class="text-gray-600 hover:text-primary">Shared</a>
+                <a href="{{ url_for('sharing.my_shares') }}" class="text-gray-600 hover:text-primary">My Shares</a>
                 <a href="#" class="text-gray-600 hover:text-primary">Settings</a>
             </nav>
             <div class="flex items-center space-x-4">
@@ -295,8 +294,8 @@ HTML_TEMPLATE = '''
                                     <a href="{{ url_for('main.download_file', file_id=file[0]) }}" class="bg-primary hover:bg-secondary text-white p-2 rounded-lg transition duration-300" title="Download">
                                         <i class="fas fa-download"></i>
                                     </a>
-                                    <button class="bg-gray-200 hover:bg-gray-300 text-gray-700 p-2 rounded-lg transition duration-300" title="Share" onclick="shareFile('{{ file[1] }}')">
-                                        <i class="fas fa-share-alt"></i>
+                                    <button class="bg-green-500 hover:bg-green-600 text-white p-2 rounded-lg transition duration-300" title="Secure Share" onclick="openShareModal({{ file[0] }}, '{{ file[1] }}')">
+                                        <i class="fas fa-shield-alt"></i>
                                     </button>
                                     <a href="{{ url_for('main.delete_file', file_id=file[0]) }}" class="bg-danger hover:bg-red-700 text-white p-2 rounded-lg transition duration-300 delete-btn" title="Delete">
                                         <i class="fas fa-trash"></i>
@@ -329,6 +328,102 @@ HTML_TEMPLATE = '''
             </div>
             <button class="ml-4 text-gray-500 hover:text-gray-700" onclick="hideToast()">
                 <i class="fas fa-times"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Secure Share Modal -->
+    <div id="shareModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center">
+        <div class="bg-white rounded-2xl p-8 max-w-md w-full mx-4">
+            <div class="text-center mb-6">
+                <div class="w-16 h-16 rounded-2xl bg-green-100 flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-shield-alt text-green-600 text-2xl"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-800">Secure Share</h2>
+                <p class="text-gray-600 mt-2">Create an encrypted share link</p>
+            </div>
+
+            <form id="shareForm">
+                <input type="hidden" id="shareFileId" name="file_id">
+                
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">File</label>
+                    <div class="bg-gray-50 rounded-lg p-3">
+                        <i class="fas fa-file text-primary mr-2"></i>
+                        <span id="shareFileName" class="font-medium"></span>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Expires In</label>
+                    <select name="expiry_hours" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-transparent">
+                        <option value="1">1 Hour</option>
+                        <option value="6">6 Hours</option>
+                        <option value="24" selected>24 Hours</option>
+                        <option value="72">3 Days</option>
+                        <option value="168">1 Week</option>
+                    </select>
+                </div>
+
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Max Downloads (Optional)</label>
+                    <input type="number" name="max_downloads" min="1" max="100" placeholder="Unlimited" 
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-transparent">
+                </div>
+
+                <div class="flex space-x-3">
+                    <button type="button" onclick="closeShareModal()" 
+                            class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 py-2 px-4 rounded-lg font-medium transition duration-300">
+                        Cancel
+                    </button>
+                    <button type="submit" 
+                            class="flex-1 bg-primary hover:bg-secondary text-white py-2 px-4 rounded-lg font-medium transition duration-300">
+                        <i class="fas fa-share mr-2"></i>Create Share
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Share Success Modal -->
+    <div id="shareSuccessModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center">
+        <div class="bg-white rounded-2xl p-8 max-w-md w-full mx-4">
+            <div class="text-center mb-6">
+                <div class="w-16 h-16 rounded-2xl bg-green-100 flex items-center justify-center mx-auto mb-4">
+                    <i class="fas fa-check-circle text-green-600 text-2xl"></i>
+                </div>
+                <h2 class="text-2xl font-bold text-gray-800">Share Created!</h2>
+                <p class="text-gray-600 mt-2">Your secure share link is ready</p>
+            </div>
+
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Share URL</label>
+                <div class="flex">
+                    <input type="text" id="shareUrlDisplay" readonly 
+                           class="flex-1 bg-gray-50 border border-gray-300 rounded-l-lg px-3 py-2 text-sm">
+                    <button onclick="copyShareUrl()" 
+                            class="bg-primary hover:bg-secondary text-white px-4 py-2 rounded-r-lg transition duration-300">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                <div class="flex items-start">
+                    <i class="fas fa-info-circle text-blue-600 mt-1 mr-3"></i>
+                    <div>
+                        <h4 class="font-semibold text-blue-800">Security Note</h4>
+                        <p class="text-sm text-blue-700 mt-1">
+                            This link contains an embedded encryption key. Recipients will get the decrypted file 
+                            but cannot see the encryption key.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <button onclick="closeShareSuccessModal()" 
+                    class="w-full bg-primary hover:bg-secondary text-white py-2 px-4 rounded-lg font-medium transition duration-300">
+                Done
             </button>
         </div>
     </div>
@@ -433,7 +528,61 @@ HTML_TEMPLATE = '''
             }, 500);
         }
         
-        // Share function
+        // Secure sharing functions
+        function openShareModal(fileId, filename) {
+            document.getElementById('shareFileId').value = fileId;
+            document.getElementById('shareFileName').textContent = filename;
+            document.getElementById('shareModal').classList.remove('hidden');
+        }
+
+        function closeShareModal() {
+            document.getElementById('shareModal').classList.add('hidden');
+        }
+
+        function closeShareSuccessModal() {
+            document.getElementById('shareSuccessModal').classList.add('hidden');
+        }
+
+        function copyShareUrl() {
+            const urlInput = document.getElementById('shareUrlDisplay');
+            urlInput.select();
+            navigator.clipboard.writeText(urlInput.value).then(() => {
+                showToast('URL Copied!', 'Share URL copied to clipboard', 'success');
+            });
+        }
+
+        // Handle share form submission
+        document.getElementById('shareForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            formData.append('file_id', document.getElementById('shareFileId').value);
+            formData.append('expiry_hours', this.expiry_hours.value);
+            if (this.max_downloads.value) {
+                formData.append('max_downloads', this.max_downloads.value);
+            }
+
+            try {
+                const response = await fetch('/create-share', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    closeShareModal();
+                    document.getElementById('shareUrlDisplay').value = result.share_url;
+                    document.getElementById('shareSuccessModal').classList.remove('hidden');
+                } else {
+                    showToast('Share Failed', result.message, 'error');
+                }
+            } catch (error) {
+                showToast('Share Failed', 'Network error occurred', 'error');
+            }
+        });
+        
+        // Legacy share function (kept for compatibility)
         function shareFile(filename) {
             const url = window.location.href;
             if (navigator.share) {
