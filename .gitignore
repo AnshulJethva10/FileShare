@@ -88,3 +88,7 @@ secrets.json
 # Extra files
 encrypt.py
 HelloWorld.txt
+
+# Markdown Files
+ENCRYPTION_SECURITY_DOCUMENTATION.md
+SECURE_SHARING_EXPLAINED.md

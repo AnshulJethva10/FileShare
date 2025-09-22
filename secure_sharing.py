@@ -144,12 +144,6 @@ class SecureFileSharing:
             (id, filename, original_filename, file_size, file_hash, 
              user_id_db, upload_date, download_count, is_encrypted, encryption_salt, encryption_method) = file_record
             
-            # For encrypted files, we'll need to get the encryption details from the file service
-            encrypted_path = None
-            encryption_key = None
-            salt = None
-            nonce = None
-            
             # Check if file exists on disk
             file_path = os.path.join(self.upload_folder, filename)
             if not os.path.exists(file_path):
@@ -158,22 +152,21 @@ class SecureFileSharing:
                     'message': 'File not found on disk'
                 }
             
-            # Create a new encrypted copy with new key for sharing
+            # Generate share identifiers and encryption key
             share_id = self._generate_share_id()
-            share_token = self._generate_share_token()
-            
-            # Generate new encryption for the share
             share_key = self.crypto.generate_share_key()
             
-            # Read file data (whether encrypted or not, we'll read as-is and re-encrypt)
+            # Read original file data 
             with open(file_path, 'rb') as f:
                 file_data = f.read()
             
-            # If the file is encrypted, we should decrypt it first
-            # For now, we'll assume files are stored decrypted and encrypt them for sharing
-            encrypted_data, share_salt, share_nonce = self.crypto.encrypt_data(
-                file_data, share_key
-            )
+            # Encrypt file data for sharing using encrypt_data which returns format: nonce + auth_tag + ciphertext
+            encrypted_data, salt_b64, nonce_b64 = self.crypto.encrypt_data(file_data, share_key)
+            if encrypted_data is None:
+                return {
+                    'success': False,
+                    'message': 'Failed to encrypt file for sharing'
+                }
             
             # Save encrypted file for sharing
             share_filename = f"share_{share_id}.dat"
@@ -193,16 +186,20 @@ class SecureFileSharing:
                                   encryption_key, salt, nonce)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (share_id, share_filename, original_filename or filename, file_size, user_id,
-                  expiry_time.isoformat(), max_downloads, base64.b64encode(share_key).decode('utf-8'), share_salt, share_nonce))
+                  expiry_time.isoformat(), max_downloads, 
+                  base64.b64encode(share_key).decode('utf-8'), salt_b64, nonce_b64))
             conn.commit()
             conn.close()
+            
+            # Create share token (base64 encoded key for URL fragment)
+            share_token = base64.b64encode(share_key).decode('utf-8')
             
             return {
                 'success': True,
                 'share_id': share_id,
-                'share_url': f"/share/{share_id}#{base64.b64encode(share_key).decode('utf-8')}",
+                'share_url': f"/share/{share_id}#{share_token}",
                 'expiry': expiry_time.isoformat(),
-                'message': f'Share created for "{original_filename or filename}"!'
+                'message': f'File "{original_filename or filename}" ready for secure sharing!'
             }
             
         except Exception as e:
@@ -216,15 +213,15 @@ class SecureFileSharing:
         Download and decrypt shared file using embedded key
         """
         try:
-            # Get share record from database
-            share_record = self._get_share_record(share_id)
+            # Get share record from database with encryption info
+            share_record = self._get_share_record_with_encryption(share_id)
             if not share_record:
                 return None, 'Share not found or expired'
             
-            # Parse share record
+            # Parse share record with encryption details
             (id, share_id_db, encrypted_filename, original_filename, 
              file_size, user_id, created_at, expiry_time, max_downloads, 
-             download_count, is_active) = share_record
+             download_count, is_active, encryption_key_b64, salt_b64, nonce_b64) = share_record
             
             # Check if share is still valid
             if not is_active:
@@ -239,10 +236,15 @@ class SecureFileSharing:
             if max_downloads and download_count >= max_downloads:
                 return None, 'Download limit reached'
             
-            # Decode the embedded encryption key
+            # Verify share token matches stored encryption key
             try:
-                share_key = base64.b64decode(share_token.encode('utf-8'))
-            except:
+                token_key = base64.b64decode(share_token.encode('utf-8'))
+                stored_key = base64.b64decode(encryption_key_b64.encode('utf-8'))
+                
+                if token_key != stored_key:
+                    return None, 'Invalid share link - key mismatch'
+                    
+            except Exception as e:
                 return None, 'Invalid share link - corrupted key'
             
             # Read encrypted file
@@ -253,10 +255,22 @@ class SecureFileSharing:
             with open(encrypted_filepath, 'rb') as f:
                 encrypted_data = f.read()
             
-            # Decrypt using the embedded key
-            decrypted_data = self.crypto.decrypt_data(encrypted_data, share_key, None, None)
+            # Decrypt using the stored key
+            import sys
+            print(f"Debug: About to decrypt file {encrypted_filename}", file=sys.stderr)
+            print(f"Debug: Encrypted data length: {len(encrypted_data)}", file=sys.stderr)
+            print(f"Debug: Using key length: {len(stored_key)}", file=sys.stderr)
+            print(f"Debug: Salt: {salt_b64}", file=sys.stderr)
+            print(f"Debug: Nonce: {nonce_b64}", file=sys.stderr)
+            
+            decrypted_data = self.crypto.decrypt_data(encrypted_data, stored_key, salt_b64, nonce_b64)
+            print(f"Debug: Decryption result: {decrypted_data is not None}", file=sys.stderr)
+            if decrypted_data:
+                print(f"Debug: Decrypted data length: {len(decrypted_data)}", file=sys.stderr)
+            
             if decrypted_data is None:
-                return None, 'Failed to decrypt file - invalid key'
+                print(f"Debug: Decryption failed!", file=sys.stderr)
+                return None, 'Failed to decrypt file - decryption error'
             
             # Create temporary file for download
             import tempfile
@@ -460,6 +474,20 @@ class SecureFileSharing:
         cursor.execute('''
             SELECT id, share_id, encrypted_filename, original_filename, file_size,
                    user_id, created_at, expiry_time, max_downloads, download_count, is_active
+            FROM shares WHERE share_id = ?
+        ''', (share_id,))
+        record = cursor.fetchone()
+        conn.close()
+        return record
+    
+    def _get_share_record_with_encryption(self, share_id):
+        """Get share record from database including encryption details"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, share_id, encrypted_filename, original_filename, file_size,
+                   user_id, created_at, expiry_time, max_downloads, download_count, is_active,
+                   encryption_key, salt, nonce
             FROM shares WHERE share_id = ?
         ''', (share_id,))
         record = cursor.fetchone()
