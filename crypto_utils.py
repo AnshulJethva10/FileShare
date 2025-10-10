@@ -11,13 +11,156 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.backends import default_backend
 import base64
 import json
+from typing import Optional, Tuple
+from crypto_plugins import BaseKEM
+
+class PQKeyManager:
+    """Post-Quantum Key Management for Kyber-KEM operations"""
+    
+    def __init__(self, kem_provider: Optional[BaseKEM] = None, master_key: Optional[str] = None):
+        """Initialize PQ key manager"""
+        self.kem = kem_provider
+        self.master_key = master_key or os.environ.get('ENCRYPTION_MASTER_KEY', 'default-change-in-production')
+    
+    def generate_keypair(self) -> Tuple[bytes, bytes]:
+        """Generate a new Kyber key pair"""
+        if not self.kem or not self.kem.is_available():
+            raise RuntimeError("KEM provider not available")
+        return self.kem.generate_keypair()
+    
+    def encrypt_private_key(self, private_key: bytes, user_password: str) -> Tuple[bytes, bytes]:
+        """
+        Encrypt private key using user-derived key
+        Returns: (encrypted_private_key, salt)
+        """
+        salt = os.urandom(16)
+        
+        # Derive key from user password and master key
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+            backend=default_backend()
+        )
+        encryption_key = kdf.derive(f"{user_password}_{self.master_key}".encode())
+        
+        # Encrypt private key with AES-256-GCM
+        nonce = os.urandom(12)
+        cipher = Cipher(
+            algorithms.AES(encryption_key),
+            modes.GCM(nonce),
+            backend=default_backend()
+        )
+        encryptor = cipher.encryptor()
+        ciphertext = encryptor.update(private_key) + encryptor.finalize()
+        
+        # Combine nonce + auth_tag + ciphertext
+        encrypted_data = nonce + encryptor.tag + ciphertext
+        
+        return encrypted_data, salt
+    
+    def decrypt_private_key(self, encrypted_private_key: bytes, salt: bytes, user_password: str) -> Optional[bytes]:
+        """
+        Decrypt private key using user-derived key
+        """
+        try:
+            # Derive same key
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=salt,
+                iterations=100000,
+                backend=default_backend()
+            )
+            decryption_key = kdf.derive(f"{user_password}_{self.master_key}".encode())
+            
+            # Extract components
+            nonce = encrypted_private_key[:12]
+            auth_tag = encrypted_private_key[12:28]
+            ciphertext = encrypted_private_key[28:]
+            
+            # Decrypt
+            cipher = Cipher(
+                algorithms.AES(decryption_key),
+                modes.GCM(nonce, auth_tag),
+                backend=default_backend()
+            )
+            decryptor = cipher.decryptor()
+            private_key = decryptor.update(ciphertext) + decryptor.finalize()
+            
+            return private_key
+        except Exception as e:
+            print(f"Private key decryption error: {e}")
+            return None
+    
+    def encapsulate_key(self, aes_key: bytes, public_key: bytes) -> Tuple[bytes, bytes]:
+        """
+        Encapsulate AES key using Kyber public key
+        Returns: (kem_ciphertext, wrapped_aes_key)
+        """
+        if not self.kem or not self.kem.is_available():
+            raise RuntimeError("KEM provider not available")
+        
+        # Generate shared secret via KEM
+        kem_ciphertext, shared_secret = self.kem.encapsulate(public_key)
+        
+        # Use shared secret to wrap AES key
+        nonce = os.urandom(12)
+        cipher = Cipher(
+            algorithms.AES(shared_secret[:32]),  # Use first 32 bytes as AES-256 key
+            modes.GCM(nonce),
+            backend=default_backend()
+        )
+        encryptor = cipher.encryptor()
+        wrapped_key = encryptor.update(aes_key) + encryptor.finalize()
+        
+        # Combine nonce + auth_tag + wrapped_key
+        wrapped_aes_key = nonce + encryptor.tag + wrapped_key
+        
+        return kem_ciphertext, wrapped_aes_key
+    
+    def decapsulate_key(self, kem_ciphertext: bytes, wrapped_aes_key: bytes, private_key: bytes) -> Optional[bytes]:
+        """
+        Decapsulate and unwrap AES key using Kyber private key
+        Returns: AES key or None if decapsulation fails
+        """
+        if not self.kem or not self.kem.is_available():
+            return None
+        
+        try:
+            # Decapsulate to get shared secret
+            shared_secret = self.kem.decapsulate(kem_ciphertext, private_key)
+            if not shared_secret:
+                return None
+            
+            # Extract wrapped key components
+            nonce = wrapped_aes_key[:12]
+            auth_tag = wrapped_aes_key[12:28]
+            ciphertext = wrapped_aes_key[28:]
+            
+            # Unwrap AES key
+            cipher = Cipher(
+                algorithms.AES(shared_secret[:32]),
+                modes.GCM(nonce, auth_tag),
+                backend=default_backend()
+            )
+            decryptor = cipher.decryptor()
+            aes_key = decryptor.update(ciphertext) + decryptor.finalize()
+            
+            return aes_key
+        except Exception as e:
+            print(f"Key decapsulation error: {e}")
+            return None
+
 
 class SecureFileEncryption:
     """Enhanced file encryption with proper key management"""
     
-    def __init__(self, master_password=None):
+    def __init__(self, master_password=None, kem_provider: Optional[BaseKEM] = None):
         """Initialize with master password for key derivation"""
         self.master_password = master_password or os.environ.get('ENCRYPTION_MASTER_KEY', 'default-change-in-production')
+        self.pq_manager = PQKeyManager(kem_provider, master_password) if kem_provider else None
         
     def _derive_key(self, salt, password=None):
         """Derive encryption key using PBKDF2"""

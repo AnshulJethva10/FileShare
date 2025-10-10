@@ -31,6 +31,14 @@ class Config:
     ENABLE_ENCRYPTION = os.environ.get('ENABLE_ENCRYPTION', 'True').lower() == 'true'
     ENCRYPTION_MASTER_KEY = os.environ.get('ENCRYPTION_MASTER_KEY', 'default-change-in-production')
     
+    # Post-Quantum (Kyber-KEM) settings
+    PQ_KEM_PROVIDER = os.environ.get('PQ_KEM_PROVIDER', 'kyber')  # kyber, mock, or none
+    PQ_KEM_ALGORITHM = os.environ.get('PQ_KEM_ALGORITHM', 'Kyber768')  # Kyber512, Kyber768, Kyber1024
+    PQ_KEM_FALLBACK = os.environ.get('PQ_KEM_FALLBACK', 'True').lower() == 'true'
+    PQ_STATIC_KEY_ROTATION_DAYS = int(os.environ.get('PQ_STATIC_KEY_ROTATION_DAYS', 90))
+    PQ_ENABLE_SHARE_LINKS = os.environ.get('PQ_ENABLE_SHARE_LINKS', 'True').lower() == 'true'
+    PQ_ENABLE_USER_KEYS = os.environ.get('PQ_ENABLE_USER_KEYS', 'True').lower() == 'true'
+    
     # Server settings
     HOST = os.environ.get('HOST', '127.0.0.1')
     PORT = int(os.environ.get('PORT', 5000))

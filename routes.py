@@ -20,7 +20,9 @@ def init_routes(app):
     file_service = FileService(
         upload_folder=app.config['UPLOAD_FOLDER'],
         db_name=app.config['DATABASE_NAME'],
-        enable_encryption=app.config.get('ENABLE_ENCRYPTION', True)
+        enable_encryption=app.config.get('ENABLE_ENCRYPTION', True),
+        kem_provider=getattr(app, 'kem_provider', None),
+        key_mgmt=getattr(app, 'key_mgmt', None)
     )
 
 @main.route('/')

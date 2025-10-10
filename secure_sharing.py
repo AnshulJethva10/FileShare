@@ -15,11 +15,14 @@ from models import FileModel
 class SecureFileSharing:
     """Secure file sharing with encrypted links"""
     
-    def __init__(self, upload_folder, db_name='file_sharing.db'):
+    def __init__(self, upload_folder, db_name='file_sharing.db', kem_provider=None, key_mgmt=None):
         self.upload_folder = upload_folder
         self.db_name = db_name
         self.file_model = FileModel(db_name)
-        self.crypto = SecureFileEncryption()
+        self.kem_provider = kem_provider
+        self.key_mgmt = key_mgmt
+        self.crypto = SecureFileEncryption(kem_provider=kem_provider)
+        self.pq_enabled = kem_provider is not None and kem_provider.is_available()
         self._init_shares_table()
         
     def create_shareable_file(self, file, user_id, expiry_hours=24, max_downloads=None):
@@ -156,9 +159,20 @@ class SecureFileSharing:
             share_id = self._generate_share_id()
             share_key = self.crypto.generate_share_key()
             
-            # Read original file data 
-            with open(file_path, 'rb') as f:
-                file_data = f.read()
+            # Read and, if necessary, decrypt original file data before sharing
+            if is_encrypted and encryption_salt:
+                # File is encrypted at rest; decrypt with per-user key prior to sharing
+                decrypted_data = self.crypto.decrypt_file(file_path, encryption_salt, user_id_db)
+                if decrypted_data is None:
+                    return {
+                        'success': False,
+                        'message': 'Failed to decrypt original file for sharing'
+                    }
+                file_data = decrypted_data
+            else:
+                # File is stored unencrypted; read bytes directly
+                with open(file_path, 'rb') as f:
+                    file_data = f.read()
             
             # Encrypt file data for sharing using encrypt_data which returns format: nonce + auth_tag + ciphertext
             encrypted_data, salt_b64, nonce_b64 = self.crypto.encrypt_data(file_data, share_key)
@@ -167,6 +181,30 @@ class SecureFileSharing:
                     'success': False,
                     'message': 'Failed to encrypt file for sharing'
                 }
+            
+            # Initialize KEM data
+            kem_ciphertext = None
+            kem_algorithm = None
+            kem_key_id = None
+            
+            # Wrap share key with server's Kyber public key if PQ is enabled
+            if self.pq_enabled and self.key_mgmt:
+                try:
+                    server_public_key = self.key_mgmt.get_server_public_key('default')
+                    if server_public_key:
+                        # Encapsulate share key with server's public key
+                        kem_ct, wrapped_share_key = self.crypto.pq_manager.encapsulate_key(
+                            share_key, server_public_key
+                        )
+                        
+                        # Combine KEM ciphertext parts
+                        kem_ciphertext = kem_ct + b'||' + wrapped_share_key
+                        kem_algorithm = self.kem_provider.get_algorithm_name()
+                        kem_key_id = 'default'
+                        
+                        print(f"✅ Share key wrapped with Kyber-KEM ({kem_algorithm})")
+                except Exception as e:
+                    print(f"⚠️  KEM encapsulation for share failed: {e}")
             
             # Save encrypted file for sharing
             share_filename = f"share_{share_id}.dat"
@@ -180,14 +218,32 @@ class SecureFileSharing:
             
             conn = sqlite3.connect(self.db_name)
             cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO shares (share_id, encrypted_filename, original_filename, 
-                                  file_size, user_id, expiry_time, max_downloads,
-                                  encryption_key, salt, nonce)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (share_id, share_filename, original_filename or filename, file_size, user_id,
-                  expiry_time.isoformat(), max_downloads, 
-                  base64.b64encode(share_key).decode('utf-8'), salt_b64, nonce_b64))
+            
+            # Check if KEM columns exist
+            cursor.execute("PRAGMA table_info(shares)")
+            columns = [column[1] for column in cursor.fetchall()]
+            has_kem_columns = 'kem_ciphertext' in columns
+            
+            if has_kem_columns:
+                cursor.execute('''
+                    INSERT INTO shares (share_id, encrypted_filename, original_filename, 
+                                      file_size, user_id, expiry_time, max_downloads,
+                                      encryption_key, salt, nonce, kem_ciphertext, kem_algorithm, kem_key_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (share_id, share_filename, original_filename or filename, file_size, user_id,
+                      expiry_time.isoformat(), max_downloads, 
+                      base64.b64encode(share_key).decode('utf-8'), salt_b64, nonce_b64,
+                      kem_ciphertext, kem_algorithm, kem_key_id))
+            else:
+                cursor.execute('''
+                    INSERT INTO shares (share_id, encrypted_filename, original_filename, 
+                                      file_size, user_id, expiry_time, max_downloads,
+                                      encryption_key, salt, nonce)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (share_id, share_filename, original_filename or filename, file_size, user_id,
+                      expiry_time.isoformat(), max_downloads, 
+                      base64.b64encode(share_key).decode('utf-8'), salt_b64, nonce_b64))
+            
             conn.commit()
             conn.close()
             
@@ -218,10 +274,16 @@ class SecureFileSharing:
             if not share_record:
                 return None, 'Share not found or expired'
             
-            # Parse share record with encryption details
+            # Parse share record with encryption details (now includes KEM fields)
+            record_len = len(share_record)
             (id, share_id_db, encrypted_filename, original_filename, 
              file_size, user_id, created_at, expiry_time, max_downloads, 
-             download_count, is_active, encryption_key_b64, salt_b64, nonce_b64) = share_record
+             download_count, is_active, encryption_key_b64, salt_b64, nonce_b64) = share_record[:14]
+            
+            # Get KEM fields if available
+            kem_ciphertext = share_record[14] if record_len > 14 else None
+            kem_algorithm = share_record[15] if record_len > 15 else None
+            kem_key_id = share_record[16] if record_len > 16 else None
             
             # Check if share is still valid
             if not is_active:
@@ -241,7 +303,35 @@ class SecureFileSharing:
                 token_key = base64.b64decode(share_token.encode('utf-8'))
                 stored_key = base64.b64decode(encryption_key_b64.encode('utf-8'))
                 
-                if token_key != stored_key:
+                # If KEM is enabled and ciphertext exists, try to decapsulate
+                actual_share_key = stored_key
+                
+                if kem_ciphertext and kem_algorithm and self.pq_enabled:
+                    try:
+                        # Split KEM ciphertext parts
+                        parts = kem_ciphertext.split(b'||')
+                        if len(parts) == 2:
+                            kem_ct, wrapped_key = parts
+                            
+                            # Get server's private key
+                            server_private_key = self.key_mgmt.get_server_private_key(kem_key_id or 'default')
+                            
+                            if server_private_key:
+                                # Decapsulate to recover share key
+                                decapsulated_key = self.crypto.pq_manager.decapsulate_key(
+                                    kem_ct, wrapped_key, server_private_key
+                                )
+                                
+                                if decapsulated_key:
+                                    actual_share_key = decapsulated_key
+                                    print(f"✅ Share key recovered via Kyber-KEM ({kem_algorithm})")
+                                else:
+                                    print("⚠️  KEM decapsulation failed, using legacy key")
+                    except Exception as e:
+                        print(f"⚠️  KEM decryption error: {e}, using legacy key")
+                
+                # Verify token matches
+                if token_key != stored_key and token_key != actual_share_key:
                     return None, 'Invalid share link - key mismatch'
                     
             except Exception as e:
@@ -255,15 +345,15 @@ class SecureFileSharing:
             with open(encrypted_filepath, 'rb') as f:
                 encrypted_data = f.read()
             
-            # Decrypt using the stored key
+            # Decrypt using the actual share key (which may have been decapsulated via KEM)
             import sys
             print(f"Debug: About to decrypt file {encrypted_filename}", file=sys.stderr)
             print(f"Debug: Encrypted data length: {len(encrypted_data)}", file=sys.stderr)
-            print(f"Debug: Using key length: {len(stored_key)}", file=sys.stderr)
+            print(f"Debug: Using key length: {len(actual_share_key)}", file=sys.stderr)
             print(f"Debug: Salt: {salt_b64}", file=sys.stderr)
             print(f"Debug: Nonce: {nonce_b64}", file=sys.stderr)
             
-            decrypted_data = self.crypto.decrypt_data(encrypted_data, stored_key, salt_b64, nonce_b64)
+            decrypted_data = self.crypto.decrypt_data(encrypted_data, actual_share_key, salt_b64, nonce_b64)
             print(f"Debug: Decryption result: {decrypted_data is not None}", file=sys.stderr)
             if decrypted_data:
                 print(f"Debug: Decrypted data length: {len(decrypted_data)}", file=sys.stderr)
@@ -438,6 +528,11 @@ class SecureFileSharing:
         """Initialize the shares table if it doesn't exist"""
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
+        
+        # Check if table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='shares'")
+        table_exists = cursor.fetchone() is not None
+        
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS shares (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -453,9 +548,27 @@ class SecureFileSharing:
                 is_active BOOLEAN DEFAULT 1,
                 encryption_key TEXT NOT NULL,
                 salt TEXT NOT NULL,
-                nonce TEXT NOT NULL
+                nonce TEXT NOT NULL,
+                kem_ciphertext BLOB,
+                kem_algorithm TEXT,
+                kem_key_id TEXT
             )
         ''')
+        
+        # Add KEM columns if table exists but doesn't have them
+        if table_exists:
+            cursor.execute("PRAGMA table_info(shares)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            if 'kem_ciphertext' not in columns:
+                try:
+                    cursor.execute('ALTER TABLE shares ADD COLUMN kem_ciphertext BLOB')
+                    cursor.execute('ALTER TABLE shares ADD COLUMN kem_algorithm TEXT')
+                    cursor.execute('ALTER TABLE shares ADD COLUMN kem_key_id TEXT')
+                    print("Added KEM columns to shares table")
+                except sqlite3.OperationalError as e:
+                    print(f"Warning: Could not add KEM columns: {e}")
+        
         conn.commit()
         conn.close()
     
@@ -484,12 +597,27 @@ class SecureFileSharing:
         """Get share record from database including encryption details"""
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, share_id, encrypted_filename, original_filename, file_size,
-                   user_id, created_at, expiry_time, max_downloads, download_count, is_active,
-                   encryption_key, salt, nonce
-            FROM shares WHERE share_id = ?
-        ''', (share_id,))
+        
+        # Check if KEM columns exist
+        cursor.execute("PRAGMA table_info(shares)")
+        columns = [column[1] for column in cursor.fetchall()]
+        has_kem_columns = 'kem_ciphertext' in columns
+        
+        if has_kem_columns:
+            cursor.execute('''
+                SELECT id, share_id, encrypted_filename, original_filename, file_size,
+                       user_id, created_at, expiry_time, max_downloads, download_count, is_active,
+                       encryption_key, salt, nonce, kem_ciphertext, kem_algorithm, kem_key_id
+                FROM shares WHERE share_id = ?
+            ''', (share_id,))
+        else:
+            cursor.execute('''
+                SELECT id, share_id, encrypted_filename, original_filename, file_size,
+                       user_id, created_at, expiry_time, max_downloads, download_count, is_active,
+                       encryption_key, salt, nonce, NULL as kem_ciphertext, NULL as kem_algorithm, NULL as kem_key_id
+                FROM shares WHERE share_id = ?
+            ''', (share_id,))
+        
         record = cursor.fetchone()
         conn.close()
         return record

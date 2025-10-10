@@ -15,6 +15,11 @@ class UserModel:
         """Initialize the database with required tables"""
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
+        
+        # Check if users table exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+        table_exists = cursor.fetchone() is not None
+        
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -22,9 +27,33 @@ class UserModel:
                 email TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active BOOLEAN DEFAULT 1
+                is_active BOOLEAN DEFAULT 1,
+                pq_public_key BLOB,
+                pq_private_key_encrypted BLOB,
+                pq_key_algorithm TEXT,
+                pq_key_created_at TIMESTAMP
             )
         ''')
+        
+        # Migrate existing users table if needed
+        if table_exists:
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            pq_columns = [
+                ('pq_public_key', 'BLOB'),
+                ('pq_private_key_encrypted', 'BLOB'),
+                ('pq_key_algorithm', 'TEXT'),
+                ('pq_key_created_at', 'TIMESTAMP')
+            ]
+            
+            for col_name, col_type in pq_columns:
+                if col_name not in columns:
+                    try:
+                        cursor.execute(f'ALTER TABLE users ADD COLUMN {col_name} {col_type}')
+                        print(f"Added {col_name} column to users table")
+                    except sqlite3.OperationalError as e:
+                        print(f"Warning: Could not add {col_name}: {e}")
         
         # Create default admin user if no users exist
         cursor.execute('SELECT COUNT(*) FROM users')
@@ -37,8 +66,45 @@ class UserModel:
             ''', ('admin', 'admin@fileshare.local', default_password))
             print("Created default admin user (username: admin, password: admin123)")
         
+        # Create server_kem_keys table for static server keys
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS server_kem_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_id TEXT UNIQUE NOT NULL,
+                public_key BLOB NOT NULL,
+                private_key_encrypted BLOB NOT NULL,
+                algorithm TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1
+            )
+        ''')
+        
         conn.commit()
         conn.close()
+    
+    def update_user_pq_keys(self, user_id, public_key, private_key_encrypted, algorithm):
+        """Update or set user's post-quantum keys"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE users SET pq_public_key = ?, pq_private_key_encrypted = ?,
+                           pq_key_algorithm = ?, pq_key_created_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (public_key, private_key_encrypted, algorithm, user_id))
+        conn.commit()
+        conn.close()
+    
+    def get_user_pq_keys(self, user_id):
+        """Get user's post-quantum keys"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT pq_public_key, pq_private_key_encrypted, pq_key_algorithm, pq_key_created_at
+            FROM users WHERE id = ?
+        ''', (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result
     
     def create_user(self, username, email, password):
         """Create a new user"""
@@ -134,6 +200,19 @@ class FileModel:
                 except sqlite3.OperationalError:
                     pass
         
+        # Check and add Kyber-KEM columns if they don't exist
+        kem_columns = ['kem_ciphertext', 'kem_algorithm', 'kem_public_key_id']
+        for col in kem_columns:
+            if col not in columns:
+                try:
+                    if col == 'kem_ciphertext':
+                        cursor.execute(f'ALTER TABLE files ADD COLUMN {col} BLOB')
+                    else:
+                        cursor.execute(f'ALTER TABLE files ADD COLUMN {col} TEXT')
+                    print(f"Added {col} column to files table")
+                except sqlite3.OperationalError:
+                    pass
+        
         # Create or update the files table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS files (
@@ -148,6 +227,9 @@ class FileModel:
                 is_encrypted BOOLEAN DEFAULT 0,
                 encryption_salt TEXT,
                 encryption_method TEXT DEFAULT "none",
+                kem_ciphertext BLOB,
+                kem_algorithm TEXT,
+                kem_public_key_id TEXT,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         ''')
@@ -155,16 +237,19 @@ class FileModel:
         conn.close()
     
     def add_file(self, filename, original_filename, file_size, file_hash, user_id, 
-                 is_encrypted=False, encryption_salt=None, encryption_method="none"):
-        """Add a new file record to the database with encryption metadata"""
+                 is_encrypted=False, encryption_salt=None, encryption_method="none",
+                 kem_ciphertext=None, kem_algorithm=None, kem_public_key_id=None):
+        """Add a new file record to the database with encryption and KEM metadata"""
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO files (filename, original_filename, file_size, file_hash, user_id, 
-                             is_encrypted, encryption_salt, encryption_method)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                             is_encrypted, encryption_salt, encryption_method,
+                             kem_ciphertext, kem_algorithm, kem_public_key_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (filename, original_filename, file_size, file_hash, user_id, 
-              is_encrypted, encryption_salt, encryption_method))
+              is_encrypted, encryption_salt, encryption_method,
+              kem_ciphertext, kem_algorithm, kem_public_key_id))
         file_id = cursor.lastrowid
         conn.commit()
         conn.close()
@@ -199,6 +284,12 @@ class FileModel:
         else:
             select_columns = f"{base_columns}, 0 as is_encrypted, NULL as encryption_salt, 'none' as encryption_method"
         
+        # Add KEM columns if available
+        if 'kem_ciphertext' in columns:
+            select_columns += ", kem_ciphertext, kem_algorithm, kem_public_key_id"
+        else:
+            select_columns += ", NULL as kem_ciphertext, NULL as kem_algorithm, NULL as kem_public_key_id"
+        
         if user_id:
             cursor.execute(f'''
                 SELECT {select_columns}
@@ -229,3 +320,56 @@ class FileModel:
         cursor.execute('DELETE FROM files WHERE id = ?', (file_id,))
         conn.commit()
         conn.close()
+
+
+class ServerKEMModel:
+    """Model for server KEM key operations"""
+    
+    def __init__(self, db_name='file_sharing.db'):
+        self.db_name = db_name
+    
+    def save_server_key(self, key_id, public_key, private_key_encrypted, algorithm):
+        """Save a new server KEM key pair"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        
+        # Deactivate any existing keys for this key_id
+        cursor.execute('UPDATE server_kem_keys SET is_active = 0 WHERE key_id = ?', (key_id,))
+        
+        # Insert new key
+        cursor.execute('''
+            INSERT INTO server_kem_keys (key_id, public_key, private_key_encrypted, algorithm)
+            VALUES (?, ?, ?, ?)
+        ''', (key_id, public_key, private_key_encrypted, algorithm))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_active_server_key(self, key_id='default'):
+        """Get the active server key for a given key_id"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT key_id, public_key, private_key_encrypted, algorithm, created_at
+            FROM server_kem_keys
+            WHERE key_id = ? AND is_active = 1
+            ORDER BY created_at DESC
+            LIMIT 1
+        ''', (key_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result
+    
+    def check_key_rotation_needed(self, key_id='default', rotation_days=90):
+        """Check if server key rotation is needed"""
+        key_info = self.get_active_server_key(key_id)
+        if not key_info:
+            return True  # No key exists, rotation needed
+        
+        created_at = key_info[4]  # created_at timestamp
+        from datetime import datetime, timedelta
+        
+        created_date = datetime.fromisoformat(created_at)
+        rotation_threshold = datetime.now() - timedelta(days=rotation_days)
+        
+        return created_date < rotation_threshold

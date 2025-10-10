@@ -19,7 +19,9 @@ def init_sharing_routes(app):
     global secure_sharing_service
     secure_sharing_service = SecureFileSharing(
         upload_folder=app.config['UPLOAD_FOLDER'],
-        db_name=app.config['DATABASE_NAME']
+        db_name=app.config['DATABASE_NAME'],
+        kem_provider=getattr(app, 'kem_provider', None),
+        key_mgmt=getattr(app, 'key_mgmt', None)
     )
 
 @sharing.route('/create-share', methods=['POST'])

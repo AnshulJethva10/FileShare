@@ -10,11 +10,14 @@ from crypto_utils import SecureFileEncryption
 class FileService:
     """Service class for file operations with encryption"""
     
-    def __init__(self, upload_folder, db_name='file_sharing.db', enable_encryption=True):
+    def __init__(self, upload_folder, db_name='file_sharing.db', enable_encryption=True, kem_provider=None, key_mgmt=None):
         self.upload_folder = upload_folder
         self.file_model = FileModel(db_name)
         self.enable_encryption = enable_encryption
-        self.crypto = SecureFileEncryption() if enable_encryption else None
+        self.kem_provider = kem_provider
+        self.key_mgmt = key_mgmt
+        self.crypto = SecureFileEncryption(kem_provider=kem_provider) if enable_encryption else None
+        self.pq_enabled = kem_provider is not None and kem_provider.is_available()
     
     def upload_file(self, file, user_id):
         """Handle file upload process with optional encryption"""
@@ -38,7 +41,39 @@ class FileService:
                     encrypted_path = os.path.join(self.upload_folder, encryption_result['encrypted_filename'])
                     final_file_size = os.path.getsize(encrypted_path)
                     
-                    # Save to database with encryption metadata
+                    # Initialize KEM metadata
+                    kem_ciphertext = None
+                    kem_algorithm = None
+                    kem_public_key_id = None
+                    
+                    # Use Kyber-KEM to wrap the AES key if PQ is enabled
+                    if self.pq_enabled and self.key_mgmt:
+                        try:
+                            # Ensure user has PQ keys
+                            # Note: In production, you'd pass the actual user password
+                            # For now, we'll use user_id as a proxy
+                            user_public_key = self.key_mgmt.get_user_public_key(user_id)
+                            
+                            if user_public_key:
+                                # Derive the AES key that was used for encryption
+                                # (we need to store this for decapsulation)
+                                import base64
+                                salt = base64.b64decode(encryption_result['salt'])
+                                aes_key = self.crypto._derive_key(salt, f"{self.crypto.master_password}_{user_id}")
+                                
+                                # Encapsulate the AES key with user's Kyber public key
+                                kem_ct, wrapped_key = self.crypto.pq_manager.encapsulate_key(aes_key, user_public_key)
+                                
+                                # Store KEM ciphertext (combining both parts)
+                                kem_ciphertext = kem_ct + b'||' + wrapped_key  # Simple separator
+                                kem_algorithm = self.kem_provider.get_algorithm_name()
+                                kem_public_key_id = str(user_id)  # Track which key was used
+                                
+                                print(f"✅ File key wrapped with Kyber-KEM ({kem_algorithm})")
+                        except Exception as e:
+                            print(f"⚠️  KEM encapsulation failed, falling back to legacy: {e}")
+                    
+                    # Save to database with encryption and KEM metadata
                     file_id = self.file_model.add_file(
                         filename=encryption_result['encrypted_filename'],
                         original_filename=original_filename,
@@ -47,7 +82,10 @@ class FileService:
                         user_id=user_id,
                         is_encrypted=True,
                         encryption_salt=encryption_result['salt'],
-                        encryption_method="AES-256-GCM"
+                        encryption_method="AES-256-GCM" if not kem_ciphertext else "AES-256-GCM+Kyber",
+                        kem_ciphertext=kem_ciphertext,
+                        kem_algorithm=kem_algorithm,
+                        kem_public_key_id=kem_public_key_id
                     )
                     
                     return {
@@ -95,13 +133,15 @@ class FileService:
                 'message': f'Error uploading file: {str(e)}'
             }
     
-    def get_file_for_download(self, file_id, user_id=None):
+    def get_file_for_download(self, file_id, user_id=None, user_password=None):
         """Get file information for download with decryption support"""
         file_record = self.file_model.get_file_by_id(file_id, user_id)
         if not file_record:
             return None, 'File not found'
         
-        # file_record format: (id, filename, original_filename, file_size, file_hash, user_id, upload_date, download_count, is_encrypted, encryption_salt, encryption_method)
+        # file_record format with KEM fields: (id, filename, original_filename, file_size, file_hash, user_id, 
+        # upload_date, download_count, is_encrypted, encryption_salt, encryption_method, 
+        # kem_ciphertext, kem_algorithm, kem_public_key_id)
         stored_filename = file_record[1]
         original_filename = file_record[2]
         file_user_id = file_record[5]
@@ -109,6 +149,12 @@ class FileService:
         # Safely get encryption fields with defaults
         is_encrypted = file_record[8] if len(file_record) > 8 and file_record[8] is not None else False
         encryption_salt = file_record[9] if len(file_record) > 9 else None
+        encryption_method = file_record[10] if len(file_record) > 10 else "none"
+        
+        # Get KEM fields if available
+        kem_ciphertext = file_record[11] if len(file_record) > 11 else None
+        kem_algorithm = file_record[12] if len(file_record) > 12 else None
+        kem_public_key_id = file_record[13] if len(file_record) > 13 else None
         
         filepath = os.path.join(self.upload_folder, stored_filename)
         if not os.path.exists(filepath):
@@ -117,7 +163,63 @@ class FileService:
         if is_encrypted and self.crypto and encryption_salt:
             # Decrypt the file for download
             try:
-                decrypted_data = self.crypto.decrypt_file(filepath, encryption_salt, file_user_id)
+                # Check if file uses Kyber-KEM for key protection
+                if kem_ciphertext and kem_algorithm and self.pq_enabled:
+                    try:
+                        # Split KEM ciphertext parts
+                        parts = kem_ciphertext.split(b'||')
+                        if len(parts) == 2:
+                            kem_ct, wrapped_key = parts
+                            
+                            # Get user's private key for decapsulation
+                            # Note: In production, user_password would be from session or re-auth
+                            private_key = self.key_mgmt.get_user_private_key(file_user_id, str(user_id))
+                            
+                            if private_key:
+                                # Decapsulate to get AES key
+                                aes_key = self.crypto.pq_manager.decapsulate_key(kem_ct, wrapped_key, private_key)
+                                
+                                if aes_key:
+                                    # Use decapsulated key to decrypt file
+                                    # Read encrypted file
+                                    with open(filepath, 'rb') as f:
+                                        encrypted_data = f.read()
+                                    
+                                    # Extract components
+                                    nonce = encrypted_data[:12]
+                                    auth_tag = encrypted_data[12:28]
+                                    ciphertext = encrypted_data[28:]
+                                    
+                                    # Decrypt with recovered AES key
+                                    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+                                    from cryptography.hazmat.backends import default_backend
+                                    
+                                    cipher = Cipher(
+                                        algorithms.AES(aes_key),
+                                        modes.GCM(nonce, auth_tag),
+                                        backend=default_backend()
+                                    )
+                                    decryptor = cipher.decryptor()
+                                    decrypted_data = decryptor.update(ciphertext) + decryptor.finalize()
+                                    
+                                    print(f"✅ File decrypted using Kyber-KEM")
+                                else:
+                                    # Fall back to legacy decryption
+                                    print("⚠️  KEM decapsulation failed, trying legacy decryption")
+                                    decrypted_data = self.crypto.decrypt_file(filepath, encryption_salt, file_user_id)
+                            else:
+                                # No private key, fall back to legacy
+                                decrypted_data = self.crypto.decrypt_file(filepath, encryption_salt, file_user_id)
+                        else:
+                            # Invalid KEM format, fall back
+                            decrypted_data = self.crypto.decrypt_file(filepath, encryption_salt, file_user_id)
+                    except Exception as e:
+                        print(f"⚠️  KEM decryption error: {e}, falling back to legacy")
+                        decrypted_data = self.crypto.decrypt_file(filepath, encryption_salt, file_user_id)
+                else:
+                    # No KEM, use legacy decryption
+                    decrypted_data = self.crypto.decrypt_file(filepath, encryption_salt, file_user_id)
+                
                 if decrypted_data is None:
                     return None, 'Failed to decrypt file'
                 
