@@ -19,7 +19,8 @@ NAV_HEADER_TEMPLATE = '''
                 <nav class="hidden md:flex space-x-6">
                     <a href="{{ url_for('main.dashboard') }}" class="{{ 'text-primary font-medium border-b-2 border-primary pb-1' if active_page == 'home' else 'text-gray-600 hover:text-primary' }} transition duration-300">Home</a>
                     <a href="{{ url_for('sharing.my_shares') }}" class="{{ 'text-primary font-medium border-b-2 border-primary pb-1' if active_page == 'shares' else 'text-gray-600 hover:text-primary' }} transition duration-300">My Shares</a>
-                    <a href="#" class="text-gray-600 hover:text-primary transition duration-300">Settings</a>
+                    <a href="{{ url_for('sharing.received_shares') }}" class="{{ 'text-primary font-medium border-b-2 border-primary pb-1' if active_page == 'received' else 'text-gray-600 hover:text-primary' }} transition duration-300">Received</a>
+                    <a href="{{ url_for('sharing.claim_share') }}" class="{{ 'text-primary font-medium border-b-2 border-primary pb-1' if active_page == 'claim' else 'text-gray-600 hover:text-primary' }} transition duration-300">Claim Share</a>
                 </nav>
                 
                 <!-- Desktop User Menu -->
@@ -45,8 +46,11 @@ NAV_HEADER_TEMPLATE = '''
                     <a href="{{ url_for('sharing.my_shares') }}" class="{{ 'text-primary font-medium bg-blue-50 px-3 py-2 rounded-lg' if active_page == 'shares' else 'text-gray-600 hover:text-primary px-3 py-2' }} transition duration-300">
                         <i class="fas fa-share-alt mr-2"></i>My Shares
                     </a>
-                    <a href="#" class="text-gray-600 hover:text-primary px-3 py-2 transition duration-300">
-                        <i class="fas fa-cog mr-2"></i>Settings
+                    <a href="{{ url_for('sharing.received_shares') }}" class="{{ 'text-primary font-medium bg-blue-50 px-3 py-2 rounded-lg' if active_page == 'received' else 'text-gray-600 hover:text-primary px-3 py-2' }} transition duration-300">
+                        <i class="fas fa-inbox mr-2"></i>Received
+                    </a>
+                    <a href="{{ url_for('sharing.claim_share') }}" class="{{ 'text-primary font-medium bg-blue-50 px-3 py-2 rounded-lg' if active_page == 'claim' else 'text-gray-600 hover:text-primary px-3 py-2' }} transition duration-300">
+                        <i class="fas fa-key mr-2"></i>Claim Share
                     </a>
                     <div class="border-t border-gray-200 pt-3 mt-3">
                         <span class="text-gray-600 text-sm px-3 block mb-2">Welcome, <strong>{{ username }}</strong></span>
@@ -412,6 +416,26 @@ HTML_TEMPLATE = '''
                 </div>
 
                 <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <i class="fas fa-shield-alt mr-1"></i>Share Type
+                    </label>
+                    <select id="shareType" name="share_type" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-transparent" onchange="togglePrivateShareOptions()">
+                        <option value="public">🌐 Public Share - Anyone with link can access</option>
+                        <option value="private">🔐 Quantum-Secure Private Share - Specific user only</option>
+                    </select>
+                </div>
+
+                <div id="privateShareOptions" class="mb-4 hidden">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">
+                        <i class="fas fa-user-lock mr-1"></i>Target User
+                    </label>
+                    <select id="targetUserId" name="target_user_id" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-transparent">
+                        <option value="">Select a user...</option>
+                    </select>
+                    <p class="text-xs text-gray-500 mt-1">The file will be encrypted with their Kyber public key</p>
+                </div>
+
+                <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-700 mb-2">Expires In</label>
                     <select name="expiry_hours" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-primary focus:border-transparent">
                         <option value="1">1 Hour</option>
@@ -586,9 +610,47 @@ HTML_TEMPLATE = '''
         }
         
         // Secure sharing functions
+        let availableUsers = [];
+        
+        // Load available users for private sharing
+        async function loadUsers() {
+            try {
+                const response = await fetch('/api/users');
+                availableUsers = await response.json();
+            } catch (error) {
+                console.error('Failed to load users:', error);
+            }
+        }
+        
+        // Load users on page load
+        loadUsers();
+        
+        function togglePrivateShareOptions() {
+            const shareType = document.getElementById('shareType').value;
+            const privateOptions = document.getElementById('privateShareOptions');
+            const targetUserSelect = document.getElementById('targetUserId');
+            
+            if (shareType === 'private') {
+                privateOptions.classList.remove('hidden');
+                
+                // Populate user dropdown
+                targetUserSelect.innerHTML = '<option value="">Select a user...</option>';
+                availableUsers.forEach(user => {
+                    const option = document.createElement('option');
+                    option.value = user.id;
+                    option.textContent = `${user.username} (${user.email})`;
+                    targetUserSelect.appendChild(option);
+                });
+            } else {
+                privateOptions.classList.add('hidden');
+            }
+        }
+        
         function openShareModal(fileId, filename) {
             document.getElementById('shareFileId').value = fileId;
             document.getElementById('shareFileName').textContent = filename;
+            document.getElementById('shareType').value = 'public';
+            togglePrivateShareOptions();
             document.getElementById('shareModal').classList.remove('hidden');
         }
 
@@ -612,11 +674,27 @@ HTML_TEMPLATE = '''
         document.getElementById('shareForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
+            const shareType = document.getElementById('shareType').value;
+            const targetUserId = document.getElementById('targetUserId').value;
+            
+            // Validate private share requirements
+            if (shareType === 'private' && !targetUserId) {
+                showToast('Validation Error', 'Please select a target user for private share', 'error');
+                return;
+            }
+            
             const formData = new FormData();
             formData.append('file_id', document.getElementById('shareFileId').value);
             formData.append('expiry_hours', this.expiry_hours.value);
+            formData.append('share_type', shareType);
+            
             if (this.max_downloads.value) {
                 formData.append('max_downloads', this.max_downloads.value);
+            }
+            
+            if (shareType === 'private') {
+                formData.append('target_user_id', targetUserId);
+                // Note: For private shares, password would be collected when claiming, not here
             }
 
             try {
@@ -629,8 +707,18 @@ HTML_TEMPLATE = '''
 
                 if (result.success) {
                     closeShareModal();
-                    document.getElementById('shareUrlDisplay').value = result.share_url;
-                    document.getElementById('shareSuccessModal').classList.remove('hidden');
+                    
+                    if (shareType === 'private') {
+                        // For private shares, show different message
+                        showToast('Private Share Created', result.message, 'success');
+                        // Optionally copy the link to clipboard
+                        navigator.clipboard.writeText(result.share_url).then(() => {
+                            showToast('Link Copied', 'Private share link copied to clipboard', 'success');
+                        });
+                    } else {
+                        document.getElementById('shareUrlDisplay').value = result.share_url;
+                        document.getElementById('shareSuccessModal').classList.remove('hidden');
+                    }
                 } else {
                     showToast('Share Failed', result.message, 'error');
                 }

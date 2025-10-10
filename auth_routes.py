@@ -26,7 +26,7 @@ def login():
             # Ensure user has PQ keys if KEM is enabled
             if hasattr(current_app, 'key_mgmt') and current_app.key_mgmt:
                 try:
-                    current_app.key_mgmt.ensure_user_keys(user[0], str(user[0]))
+                    current_app.key_mgmt.ensure_user_keys(user[0], password)
                 except Exception as e:
                     print(f"⚠️  Failed to ensure PQ keys for user {user[0]}: {e}")
             
@@ -69,7 +69,7 @@ def signup():
             # Generate PQ keys for new user if KEM is enabled
             if hasattr(current_app, 'key_mgmt') and current_app.key_mgmt:
                 try:
-                    current_app.key_mgmt.ensure_user_keys(user_id, str(user_id))
+                    current_app.key_mgmt.ensure_user_keys(user_id, password)
                     print(f"✅ Generated PQ keys for new user {user_id}")
                 except Exception as e:
                     print(f"⚠️  Failed to generate PQ keys for new user: {e}")

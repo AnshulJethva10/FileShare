@@ -11,6 +11,17 @@ class UserModel:
     def __init__(self, db_name='file_sharing.db'):
         self.db_name = db_name
     
+    def get_all_users(self):
+        """Get all active users (id, username, email)"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, username, email FROM users WHERE is_active = 1
+        ''')
+        users = cursor.fetchall()
+        conn.close()
+        return users
+    
     def init_db(self):
         """Initialize the database with required tables"""
         conn = sqlite3.connect(self.db_name)
@@ -160,6 +171,15 @@ class UserModel:
         exists = cursor.fetchone() is not None
         conn.close()
         return exists
+    
+    def get_username_by_id(self, user_id):
+        """Get username by user ID"""
+        conn = sqlite3.connect(self.db_name)
+        cursor = conn.cursor()
+        cursor.execute('SELECT username FROM users WHERE id = ?', (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
 
 class FileModel:
     """Model for file database operations"""

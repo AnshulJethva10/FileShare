@@ -134,3 +134,25 @@ def api_files():
             'download_count': file[4]
         })
     return jsonify(file_list)
+
+@main.route('/api/users')
+@login_required
+def api_users():
+    """API endpoint to get list of users for private sharing"""
+    from models import UserModel
+    user_model = UserModel(current_app.config['DATABASE_NAME'])
+    
+    current_user_id = session['user_id']
+    all_users = user_model.get_all_users()
+    
+    # Filter out current user and format for response
+    user_list = []
+    for user in all_users:
+        if user[0] != current_user_id:  # Exclude current user
+            user_list.append({
+                'id': user[0],
+                'username': user[1],
+                'email': user[2]
+            })
+    
+    return jsonify(user_list)

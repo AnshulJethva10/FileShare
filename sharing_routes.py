@@ -28,7 +28,7 @@ def init_sharing_routes(app):
 @sharing.route('/create-share', methods=['POST'])
 @login_required
 def create_share():
-    """Create a secure shareable file"""
+    """Create a secure shareable file (public or private)"""
     file_id = request.form.get('file_id')
     
     if not file_id:
@@ -39,14 +39,28 @@ def create_share():
     max_downloads = request.form.get('max_downloads')
     max_downloads = int(max_downloads) if max_downloads and max_downloads.strip() else None
     
+    # Get share type and target user for private shares
+    share_type = request.form.get('share_type', 'public')
+    target_user_id = request.form.get('target_user_id')
+    user_password = request.form.get('user_password')  # For private shares
+    
     user_id = session['user_id']
+    
+    # Validate private share requirements
+    if share_type == 'private':
+        if not target_user_id:
+            return jsonify({'success': False, 'message': 'Target user is required for private shares'}), 400
+        target_user_id = int(target_user_id)
     
     # Create shareable file from existing file
     result = secure_sharing_service.create_share_from_file_id(
         file_id=int(file_id),
         user_id=user_id,
         expiry_hours=expiry_hours,
-        max_downloads=max_downloads
+        max_downloads=max_downloads,
+        share_type=share_type,
+        target_user_id=target_user_id,
+        user_password=user_password
     )
     
     if result['success']:
@@ -87,12 +101,21 @@ def download_shared_file(share_id):
     """Download shared file with embedded key"""
     # Get share token from query parameter (passed by JavaScript)
     share_token = request.args.get('token')
+    user_password = request.args.get('password')  # For private shares
     
     if not share_token:
         flash('Invalid share link', 'error')
         return redirect(url_for('sharing.share_download_page', share_id=share_id))
     
-    file_info, error = secure_sharing_service.download_shared_file(share_id, share_token)
+    # Get current user if authenticated (required for private shares)
+    current_user_id = session.get('user_id')
+    
+    file_info, error = secure_sharing_service.download_shared_file(
+        share_id, 
+        share_token,
+        current_user_id=current_user_id,
+        user_password=user_password
+    )
     
     if error:
         return render_template_string(SHARE_ERROR_TEMPLATE, error=error)
@@ -148,6 +171,133 @@ def deactivate_share(share_id):
         flash('Failed to deactivate share', 'error')
     
     return redirect(url_for('sharing.my_shares'))
+
+@sharing.route('/received-shares')
+@login_required
+def received_shares():
+    """Display private shares received by the user"""
+    user_id = session['user_id']
+    username = session['username']
+    
+    # Get private shares targeted to this user
+    import sqlite3
+    conn = sqlite3.connect(secure_sharing_service.db_name)
+    cursor = conn.cursor()
+    
+    # Check if private share columns exist
+    cursor.execute("PRAGMA table_info(shares)")
+    columns = [column[1] for column in cursor.fetchall()]
+    has_private_columns = 'share_type' in columns
+    
+    if has_private_columns:
+        cursor.execute('''
+            SELECT share_id, original_filename, file_size, created_at, expiry_time,
+                   max_downloads, download_count, is_active, user_id
+            FROM shares 
+            WHERE share_type = 'private' AND target_user_id = ? 
+            ORDER BY created_at DESC
+        ''', (user_id,))
+        shares = cursor.fetchall()
+    else:
+        shares = []
+    
+    conn.close()
+    
+    # Get usernames for share creators
+    from models import UserModel
+    user_model = UserModel(secure_sharing_service.db_name)
+    shares_with_creators = []
+    for share in shares:
+        creator_username = user_model.get_username_by_id(share[8])  # user_id is at index 8
+        shares_with_creators.append(share + (creator_username,))
+    
+    # Render navigation header with active page
+    nav_header = render_template_string(NAV_HEADER_TEMPLATE, username=username, active_page='received')
+    
+    return render_template_string(RECEIVED_SHARES_TEMPLATE, 
+                                shares=shares_with_creators, 
+                                format_file_size=format_file_size,
+                                nav_header=nav_header,
+                                username=username)
+
+@sharing.route('/claim-share', methods=['GET', 'POST'])
+@login_required
+def claim_share():
+    """Claim a private share by pasting the link"""
+    user_id = session['user_id']
+    username = session['username']
+    
+    if request.method == 'POST':
+        share_url = request.form.get('share_url', '')
+        user_password = request.form.get('user_password')
+        
+        if not user_password:
+            flash('Password is required to access private shares', 'error')
+            return redirect(url_for('sharing.claim_share'))
+        
+        # Parse share_id and token from URL
+        # Format: /share/{share_id}#{token} or full URL
+        try:
+            if '#' in share_url:
+                parts = share_url.split('#')
+                share_part = parts[0]
+                share_token = parts[1]
+                
+                # Extract share_id from path
+                if '/share/' in share_part:
+                    share_id = share_part.split('/share/')[-1].strip('/')
+                else:
+                    flash('Invalid share link format', 'error')
+                    return redirect(url_for('sharing.claim_share'))
+            else:
+                flash('Invalid share link - missing security token', 'error')
+                return redirect(url_for('sharing.claim_share'))
+            
+            # Try to download the file
+            file_info, error = secure_sharing_service.download_shared_file(
+                share_id, 
+                share_token,
+                current_user_id=user_id,
+                user_password=user_password
+            )
+            
+            if error:
+                flash(f'Error: {error}', 'error')
+                return redirect(url_for('sharing.claim_share'))
+            
+            # Send the file
+            try:
+                response = send_file(
+                    file_info['filepath'],
+                    as_attachment=True,
+                    download_name=file_info['original_filename']
+                )
+                
+                # Clean up temporary file after sending
+                if file_info.get('is_temp', False):
+                    import atexit
+                    atexit.register(lambda: os.remove(file_info['filepath']) if os.path.exists(file_info['filepath']) else None)
+                
+                flash('File downloaded successfully!', 'success')
+                return response
+                
+            except Exception as e:
+                # Clean up temp file if error occurs
+                if file_info.get('is_temp', False) and os.path.exists(file_info['filepath']):
+                    os.remove(file_info['filepath'])
+                flash(f'Error downloading file: {str(e)}', 'error')
+                return redirect(url_for('sharing.claim_share'))
+                
+        except Exception as e:
+            flash(f'Error processing share link: {str(e)}', 'error')
+            return redirect(url_for('sharing.claim_share'))
+    
+    # Render navigation header
+    nav_header = render_template_string(NAV_HEADER_TEMPLATE, username=username, active_page='claim')
+    
+    return render_template_string(CLAIM_SHARE_TEMPLATE,
+                                nav_header=nav_header,
+                                username=username)
 
 # Templates
 SHARE_DOWNLOAD_TEMPLATE = '''
@@ -431,6 +581,180 @@ MY_SHARES_TEMPLATE = '''
             </div>
         </div>
     </footer>
+</body>
+</html>
+'''
+
+RECEIVED_SHARES_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Received Shares - FileShare</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#4361ee',
+                        secondary: '#3f37c9',
+                        accent: '#4895ef'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Poppins', sans-serif; }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+{{ nav_header|safe }}
+    
+    <main class="container mx-auto px-4 py-8">
+        <div class="max-w-4xl mx-auto">
+            <div class="bg-white rounded-2xl shadow-lg p-6 mb-6">
+                <h1 class="text-3xl font-bold text-gray-800">📨 Received Private Shares</h1>
+                <p class="text-gray-600 mt-2">Quantum-secure files shared with you</p>
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-xl p-6">
+                {% if shares %}
+                    <div class="space-y-4">
+                        {% for share in shares %}
+                        <div class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition duration-300">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center">
+                                    <i class="fas fa-lock text-primary text-xl mr-4"></i>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">{{ share[1] }}</h3>
+                                        <p class="text-sm text-gray-600">{{ format_file_size(share[2]) }} • From: {{ share[9] }}</p>
+                                    </div>
+                                </div>
+                                
+                                <div class="flex items-center space-x-4">
+                                    <div class="text-sm text-gray-600">
+                                        <div>Expires: {{ share[4][:19] }}</div>
+                                    </div>
+                                    
+                                    {% if share[7] %}
+                                        <span class="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs">Active</span>
+                                    {% else %}
+                                        <span class="px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs">Expired</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-12">
+                        <i class="fas fa-inbox text-gray-400 text-6xl mb-4"></i>
+                        <h3 class="text-xl font-semibold text-gray-600 mb-2">No Private Shares Yet</h3>
+                        <p class="text-gray-500">When someone shares a file privately with you, it will appear here</p>
+                        <a href="{{ url_for('sharing.claim_share') }}" class="inline-block mt-4 bg-primary hover:bg-secondary text-white py-2 px-6 rounded-lg transition duration-300">
+                            <i class="fas fa-plus mr-2"></i>Claim a Share
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </main>
+</body>
+</html>
+'''
+
+CLAIM_SHARE_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claim Private Share - FileShare</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#4361ee',
+                        secondary: '#3f37c9',
+                        accent: '#4895ef'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Poppins', sans-serif; }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+{{ nav_header|safe }}
+    
+    <main class="container mx-auto px-4 py-8">
+        <div class="max-w-2xl mx-auto">
+            <div class="bg-white rounded-2xl shadow-xl p-8">
+                <div class="text-center mb-8">
+                    <div class="w-16 h-16 rounded-2xl bg-primary flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-key text-white text-2xl"></i>
+                    </div>
+                    <h1 class="text-3xl font-bold text-gray-800">Claim Private Share</h1>
+                    <p class="text-gray-600 mt-2">Paste your quantum-secure private share link below</p>
+                </div>
+
+                <form method="POST" action="{{ url_for('sharing.claim_share') }}">
+                    <div class="mb-6">
+                        <label class="block text-gray-700 font-medium mb-2">
+                            <i class="fas fa-link mr-2"></i>Share Link
+                        </label>
+                        <input type="text" 
+                               name="share_url" 
+                               placeholder="Paste the complete share link here"
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                               required>
+                        <p class="text-sm text-gray-500 mt-2">Example: http://localhost:5000/share/abc123#tokenhere</p>
+                    </div>
+
+                    <div class="mb-6">
+                        <label class="block text-gray-700 font-medium mb-2">
+                            <i class="fas fa-lock mr-2"></i>Your Password
+                        </label>
+                        <input type="password" 
+                               name="user_password" 
+                               placeholder="Enter your account password"
+                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                               required>
+                        <p class="text-sm text-gray-500 mt-2">Required to decrypt the file using your Kyber private key</p>
+                    </div>
+
+                    <button type="submit" 
+                            class="w-full bg-primary hover:bg-secondary text-white py-3 px-6 rounded-lg font-medium transition duration-300">
+                        <i class="fas fa-download mr-2"></i>Claim and Download
+                    </button>
+                </form>
+
+                <div class="mt-8 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <h3 class="font-semibold text-blue-800 mb-2">
+                        <i class="fas fa-info-circle mr-2"></i>How it works
+                    </h3>
+                    <ul class="text-sm text-blue-700 space-y-1">
+                        <li>• The sender encrypted the file with AES-256</li>
+                        <li>• The AES key was wrapped using your Kyber public key</li>
+                        <li>• Your password decrypts your Kyber private key</li>
+                        <li>• Your private key unwraps the AES key to decrypt the file</li>
+                        <li>• 🔐 Quantum-secure end-to-end encryption!</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </main>
 </body>
 </html>
 '''
