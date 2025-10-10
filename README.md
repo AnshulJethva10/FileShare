@@ -22,7 +22,7 @@ A Flask-based file sharing application with **Kyber-KEM post-quantum encryption*
 ## 📋 Requirements
 
 - Python 3.8+
-- liboqs library (for Kyber support)
+- kyber-py library (pure Python ML-KEM/Kyber implementation)
 - Flask 3.0+
 - cryptography 41.0+
 
@@ -36,35 +36,19 @@ cd FileShare
 
 ### 2. Install Dependencies
 
-#### Option A: With Kyber Support (Recommended)
+#### With Kyber Support (Recommended)
 
-**On Linux/macOS:**
+**All Platforms (Windows/Linux/macOS):**
 ```bash
-# Install liboqs system library
-git clone https://github.com/open-quantum-safe/liboqs.git
-cd liboqs
-mkdir build && cd build
-cmake -GNinja ..
-ninja
-sudo ninja install
-
-# Install Python dependencies
-cd ../../FileShare
+# Simply install Python dependencies - kyber-py is pure Python!
 pip install -r requirements.txt
 ```
 
-**On Windows:**
-```powershell
-# Download prebuilt liboqs from https://github.com/open-quantum-safe/liboqs/releases
-# Or build from source using Visual Studio
+That's it! The `kyber-py` library is a pure Python implementation of ML-KEM (Kyber), so no system libraries or compilation is needed.
 
-# Install Python dependencies
-pip install -r requirements.txt
-```
+**Note**: If kyber-py installation fails, the application will automatically fall back to MockKEM mode (development only).
 
-**Note**: If liboqs installation fails, the application will automatically fall back to MockKEM mode (development only).
-
-#### Option B: Without Kyber (Legacy Mode)
+#### Without Kyber (Legacy Mode)
 ```bash
 pip install Flask==3.0.0 Werkzeug==3.0.1 python-dotenv==1.0.1 cryptography==41.0.7
 ```
@@ -281,9 +265,10 @@ FileShare/
 **Error**: "Kyber KEM unavailable and fallback disabled"
 
 **Solutions**:
-1. Install liboqs library (see installation section)
+1. Install kyber-py: `pip install kyber-py`
 2. Enable fallback: `PQ_KEM_FALLBACK=True`
 3. Use MockKEM: `PQ_KEM_PROVIDER=mock` (development only)
+4. Check Python version (3.8+ required)
 
 ### Legacy Files Not Working
 **Issue**: Old files can't be decrypted after PQ upgrade
@@ -298,7 +283,8 @@ FileShare/
 
 **Solutions**:
 - Use Kyber768 instead of Kyber1024 (balanced security/performance)
-- Ensure liboqs compiled with optimizations
+- kyber-py is pure Python, so performance is reasonable but not as fast as C implementations
+- For production at scale, consider using the C-based liboqs if needed
 - Consider caching decrypted private keys in memory (security tradeoff)
 
 ## 📝 License
@@ -316,14 +302,16 @@ Contributions welcome! Please ensure:
 ## 📚 References
 
 - [NIST PQC Standardization](https://csrc.nist.gov/projects/post-quantum-cryptography)
-- [Open Quantum Safe](https://openquantumsafe.org/)
-- [Kyber Specification](https://pq-crystals.org/kyber/)
 - [ML-KEM (FIPS 203)](https://csrc.nist.gov/pubs/fips/203/final)
+- [Kyber Specification](https://pq-crystals.org/kyber/)
+- [kyber-py Library](https://github.com/GiacomoPope/kyber-py)
+- [Open Quantum Safe](https://openquantumsafe.org/)
 
 ## 🙏 Acknowledgments
 
-- Open Quantum Safe project for liboqs
-- CRYSTALS-Kyber team
+- Giacomo Pope for kyber-py (pure Python ML-KEM implementation)
+- CRYSTALS-Kyber team for the original algorithm
+- NIST for ML-KEM standardization
 - Flask and cryptography library maintainers
 
 ---

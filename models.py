@@ -333,17 +333,29 @@ class ServerKEMModel:
         conn = sqlite3.connect(self.db_name)
         cursor = conn.cursor()
         
-        # Deactivate any existing keys for this key_id
-        cursor.execute('UPDATE server_kem_keys SET is_active = 0 WHERE key_id = ?', (key_id,))
-        
-        # Insert new key
-        cursor.execute('''
-            INSERT INTO server_kem_keys (key_id, public_key, private_key_encrypted, algorithm)
-            VALUES (?, ?, ?, ?)
-        ''', (key_id, public_key, private_key_encrypted, algorithm))
-        
-        conn.commit()
-        conn.close()
+        try:
+            # Check if a key with this key_id already exists
+            cursor.execute('SELECT id FROM server_kem_keys WHERE key_id = ?', (key_id,))
+            existing = cursor.fetchone()
+            
+            if existing:
+                # Update existing key
+                cursor.execute('''
+                    UPDATE server_kem_keys 
+                    SET public_key = ?, private_key_encrypted = ?, algorithm = ?,
+                        created_at = CURRENT_TIMESTAMP, is_active = 1
+                    WHERE key_id = ?
+                ''', (public_key, private_key_encrypted, algorithm, key_id))
+            else:
+                # Insert new key
+                cursor.execute('''
+                    INSERT INTO server_kem_keys (key_id, public_key, private_key_encrypted, algorithm)
+                    VALUES (?, ?, ?, ?)
+                ''', (key_id, public_key, private_key_encrypted, algorithm))
+            
+            conn.commit()
+        finally:
+            conn.close()
     
     def get_active_server_key(self, key_id='default'):
         """Get the active server key for a given key_id"""

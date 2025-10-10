@@ -143,9 +143,31 @@ class SecureFileSharing:
                 }
             
             # Extract file information (adjusted for actual db structure)
-            # Structure: id, filename, original_filename, file_size, file_hash, user_id, upload_date, download_count, is_encrypted, encryption_salt, encryption_method
-            (id, filename, original_filename, file_size, file_hash, 
-             user_id_db, upload_date, download_count, is_encrypted, encryption_salt, encryption_method) = file_record
+            # Structure: id, filename, original_filename, file_size, file_hash, user_id, upload_date, download_count, 
+            #           is_encrypted, encryption_salt, encryption_method, kem_ciphertext, kem_algorithm, kem_public_key_id
+            
+            # Handle both old format (11 values) and new format (14 values) for backward compatibility
+            if len(file_record) == 14:
+                (id, filename, original_filename, file_size, file_hash, 
+                 user_id_db, upload_date, download_count, is_encrypted, encryption_salt, encryption_method,
+                 kem_ciphertext, kem_algorithm, kem_public_key_id) = file_record
+            elif len(file_record) == 11:
+                # Legacy format without KEM columns
+                (id, filename, original_filename, file_size, file_hash, 
+                 user_id_db, upload_date, download_count, is_encrypted, encryption_salt, encryption_method) = file_record
+            else:
+                # Try to unpack what we have
+                id = file_record[0]
+                filename = file_record[1]
+                original_filename = file_record[2]
+                file_size = file_record[3]
+                file_hash = file_record[4]
+                user_id_db = file_record[5]
+                upload_date = file_record[6]
+                download_count = file_record[7]
+                is_encrypted = file_record[8] if len(file_record) > 8 else False
+                encryption_salt = file_record[9] if len(file_record) > 9 else None
+                encryption_method = file_record[10] if len(file_record) > 10 else 'none'
             
             # Check if file exists on disk
             file_path = os.path.join(self.upload_folder, filename)

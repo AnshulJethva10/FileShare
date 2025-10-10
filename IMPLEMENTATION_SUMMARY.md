@@ -5,7 +5,8 @@
 ### 1. **Crypto Plugins Architecture** ✓
 - Created modular KEM plugin system (`crypto_plugins/`)
 - Base abstract interface (`base_kem.py`)
-- Kyber implementation using liboqs (`kyber_kem.py`)
+- Kyber implementation using kyber-py ML-KEM (`kyber_kem.py`)
+- Pure Python implementation - no compilation needed!
 - MockKEM fallback for development/testing
 - Plugin loader with configurable fallback
 
@@ -103,7 +104,7 @@
   - Architecture overview
 
 - Updated `requirements.txt`:
-  - Added `liboqs-python==0.10.1`
+  - Added `kyber-py==0.1.0` (pure Python ML-KEM)
 
 ## 🎯 Key Features Delivered
 
@@ -131,14 +132,7 @@ python app.py
 
 ### For Production (Real Kyber)
 ```bash
-# Install liboqs
-git clone https://github.com/open-quantum-safe/liboqs.git
-cd liboqs
-mkdir build && cd build
-cmake -GNinja .. && ninja && sudo ninja install
-
-# Install Python deps
-cd ../../FileShare
+# Simply install Python dependencies - kyber-py is pure Python!
 pip install -r requirements.txt
 
 # Configure .env
