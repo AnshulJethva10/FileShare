@@ -2,6 +2,84 @@
 HTML templates for the File Sharing Application
 """
 
+# Shared navigation header component
+NAV_HEADER_TEMPLATE = '''
+    <!-- Header -->
+    <header class="bg-white shadow-sm">
+        <div class="container mx-auto px-4 py-4">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-2">
+                    <div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
+                        <i class="fas fa-cloud-upload-alt text-white text-xl"></i>
+                    </div>
+                    <h1 class="text-2xl font-bold text-primary">File<span class="text-secondary">Share</span></h1>
+                </div>
+                
+                <!-- Desktop Navigation -->
+                <nav class="hidden md:flex space-x-6">
+                    <a href="{{ url_for('main.dashboard') }}" class="{{ 'text-primary font-medium border-b-2 border-primary pb-1' if active_page == 'home' else 'text-gray-600 hover:text-primary' }} transition duration-300">Home</a>
+                    <a href="{{ url_for('sharing.my_shares') }}" class="{{ 'text-primary font-medium border-b-2 border-primary pb-1' if active_page == 'shares' else 'text-gray-600 hover:text-primary' }} transition duration-300">My Shares</a>
+                    <a href="#" class="text-gray-600 hover:text-primary transition duration-300">Settings</a>
+                </nav>
+                
+                <!-- Desktop User Menu -->
+                <div class="hidden md:flex items-center space-x-4">
+                    <span class="text-gray-600">Welcome, <strong>{{ username }}</strong></span>
+                    <a href="{{ url_for('auth.logout') }}" class="bg-danger hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition duration-300">
+                        <i class="fas fa-sign-out-alt mr-1"></i> Logout
+                    </a>
+                </div>
+                
+                <!-- Mobile Menu Button -->
+                <button id="mobileMenuBtn" class="md:hidden text-gray-600 hover:text-primary focus:outline-none">
+                    <i class="fas fa-bars text-xl"></i>
+                </button>
+            </div>
+            
+            <!-- Mobile Navigation Menu -->
+            <div id="mobileMenu" class="md:hidden hidden mt-4 pt-4 border-t border-gray-200">
+                <nav class="flex flex-col space-y-3">
+                    <a href="{{ url_for('main.dashboard') }}" class="{{ 'text-primary font-medium bg-blue-50 px-3 py-2 rounded-lg' if active_page == 'home' else 'text-gray-600 hover:text-primary px-3 py-2' }} transition duration-300">
+                        <i class="fas fa-home mr-2"></i>Home
+                    </a>
+                    <a href="{{ url_for('sharing.my_shares') }}" class="{{ 'text-primary font-medium bg-blue-50 px-3 py-2 rounded-lg' if active_page == 'shares' else 'text-gray-600 hover:text-primary px-3 py-2' }} transition duration-300">
+                        <i class="fas fa-share-alt mr-2"></i>My Shares
+                    </a>
+                    <a href="#" class="text-gray-600 hover:text-primary px-3 py-2 transition duration-300">
+                        <i class="fas fa-cog mr-2"></i>Settings
+                    </a>
+                    <div class="border-t border-gray-200 pt-3 mt-3">
+                        <span class="text-gray-600 text-sm px-3 block mb-2">Welcome, <strong>{{ username }}</strong></span>
+                        <a href="{{ url_for('auth.logout') }}" class="bg-danger hover:bg-red-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition duration-300 inline-block">
+                            <i class="fas fa-sign-out-alt mr-1"></i> Logout
+                        </a>
+                    </div>
+                </nav>
+            </div>
+        </div>
+    </header>
+    
+    <script>
+        // Mobile menu toggle
+        document.addEventListener('DOMContentLoaded', function() {
+            const mobileMenuBtn = document.getElementById('mobileMenuBtn');
+            const mobileMenu = document.getElementById('mobileMenu');
+            
+            if (mobileMenuBtn && mobileMenu) {
+                mobileMenuBtn.addEventListener('click', function() {
+                    mobileMenu.classList.toggle('hidden');
+                    const icon = this.querySelector('i');
+                    if (mobileMenu.classList.contains('hidden')) {
+                        icon.className = 'fas fa-bars text-xl';
+                    } else {
+                        icon.className = 'fas fa-times text-xl';
+                    }
+                });
+            }
+        });
+    </script>
+'''
+
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -96,28 +174,7 @@ HTML_TEMPLATE = '''
     </style>
 </head>
 <body class="text-dark">
-    <!-- Header -->
-    <header class="bg-white shadow-sm">
-        <div class="container mx-auto px-4 py-4 flex justify-between items-center">
-            <div class="flex items-center space-x-2">
-                <div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
-                    <i class="fas fa-cloud-upload-alt text-white text-xl"></i>
-                </div>
-                <h1 class="text-2xl font-bold text-primary">File<span class="text-secondary">Share</span></h1>
-            </div>
-            <nav class="hidden md:flex space-x-6">
-                <a href="{{ url_for('main.dashboard') }}" class="text-primary font-medium hover:text-secondary">Home</a>
-                <a href="{{ url_for('sharing.my_shares') }}" class="text-gray-600 hover:text-primary">My Shares</a>
-                <a href="#" class="text-gray-600 hover:text-primary">Settings</a>
-            </nav>
-            <div class="flex items-center space-x-4">
-                <span class="text-gray-600">Welcome, <strong>{{ username }}</strong></span>
-                <a href="{{ url_for('auth.logout') }}" class="bg-danger hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition duration-300">
-                    <i class="fas fa-sign-out-alt mr-1"></i> Logout
-                </a>
-            </div>
-        </div>
-    </header>
+{{ nav_header|safe }}
 
     <!-- Main Content -->
     <main class="container mx-auto px-4 py-8">

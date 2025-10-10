@@ -4,7 +4,7 @@ Route handlers for the File Sharing Application
 import os
 from flask import Blueprint, request, render_template_string, redirect, url_for, send_file, flash, jsonify, current_app, session
 from services import FileService
-from templates import HTML_TEMPLATE
+from templates import HTML_TEMPLATE, NAV_HEADER_TEMPLATE
 from utils import format_file_size
 from auth_routes import login_required
 
@@ -61,7 +61,15 @@ def dashboard():
     
     # Get user's files for display
     files = file_service.get_user_files(user_id)
-    return render_template_string(HTML_TEMPLATE, files=files, format_file_size=format_file_size, username=username)
+    
+    # Render navigation header with active page
+    nav_header = render_template_string(NAV_HEADER_TEMPLATE, username=username, active_page='home')
+    
+    return render_template_string(HTML_TEMPLATE, 
+                                files=files, 
+                                format_file_size=format_file_size, 
+                                username=username, 
+                                nav_header=nav_header)
 
 @main.route('/download/<int:file_id>')
 @login_required

@@ -7,6 +7,7 @@ from flask import Blueprint, request, render_template_string, redirect, url_for,
 from secure_sharing import SecureFileSharing
 from auth_routes import login_required
 from utils import format_file_size
+from templates import NAV_HEADER_TEMPLATE
 
 # Create blueprint
 sharing = Blueprint('sharing', __name__)
@@ -122,11 +123,17 @@ def download_shared_file(share_id):
 def my_shares():
     """Display user's shared files"""
     user_id = session['user_id']
+    username = session['username']
     shares = secure_sharing_service.get_user_shares(user_id)
+    
+    # Render navigation header with active page
+    nav_header = render_template_string(NAV_HEADER_TEMPLATE, username=username, active_page='shares')
     
     return render_template_string(MY_SHARES_TEMPLATE, 
                                 shares=shares, 
-                                format_file_size=format_file_size)
+                                format_file_size=format_file_size,
+                                nav_header=nav_header,
+                                username=username)
 
 @sharing.route('/deactivate-share/<share_id>', methods=['POST'])
 @login_required
@@ -298,25 +305,44 @@ MY_SHARES_TEMPLATE = '''
     <title>My Shares - FileShare</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#4361ee',
+                        secondary: '#3f37c9',
+                        accent: '#4895ef',
+                        light: '#f8f9fa',
+                        dark: '#212529',
+                        success: '#4cc9f0',
+                        warning: '#f72585',
+                        danger: '#e63946'
+                    }
+                }
+            }
+        }
+    </script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
-        body { font-family: 'Poppins', sans-serif; }
+        body { 
+            font-family: 'Poppins', sans-serif; 
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4edf5 100%);
+            min-height: 100vh;
+        }
     </style>
 </head>
-<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
-    <div class="container mx-auto px-4 py-8">
+<body class="text-dark">
+{{ nav_header|safe }}
+    
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-8">
         <div class="max-w-4xl mx-auto">
-            <!-- Header -->
-            <div class="bg-white rounded-2xl shadow-xl p-6 mb-6">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h1 class="text-3xl font-bold text-gray-800">My Shared Files</h1>
-                        <p class="text-gray-600 mt-2">Manage your secure file shares</p>
-                    </div>
-                    <a href="{{ url_for('main.dashboard') }}" 
-                       class="bg-primary hover:bg-secondary text-white py-2 px-4 rounded-lg transition duration-300">
-                        <i class="fas fa-arrow-left mr-2"></i>Back to Dashboard
-                    </a>
+            <!-- Page Header -->
+            <div class="bg-white rounded-2xl shadow-lg p-6 mb-6">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800">My Shared Files</h1>
+                    <p class="text-gray-600 mt-2">Manage your secure file shares</p>
                 </div>
             </div>
 
@@ -370,7 +396,41 @@ MY_SHARES_TEMPLATE = '''
                 {% endif %}
             </div>
         </div>
-    </div>
+    </main>
+    
+    <!-- Footer -->
+    <footer class="bg-white border-t mt-12">
+        <div class="container mx-auto px-4 py-8">
+            <div class="flex flex-col md:flex-row justify-between items-center">
+                <div class="mb-4 md:mb-0">
+                    <div class="flex items-center">
+                        <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center mr-2">
+                            <i class="fas fa-cloud-upload-alt text-white"></i>
+                        </div>
+                        <span class="text-xl font-bold text-dark">File<span class="text-primary">Share</span></span>
+                    </div>
+                    <p class="text-gray-500 text-sm mt-2">Secure and reliable file sharing platform</p>
+                </div>
+                <div class="flex space-x-6">
+                    <a href="#" class="text-gray-500 hover:text-primary">
+                        <i class="fab fa-facebook-f"></i>
+                    </a>
+                    <a href="#" class="text-gray-500 hover:text-primary">
+                        <i class="fab fa-twitter"></i>
+                    </a>
+                    <a href="#" class="text-gray-500 hover:text-primary">
+                        <i class="fab fa-instagram"></i>
+                    </a>
+                    <a href="#" class="text-gray-500 hover:text-primary">
+                        <i class="fab fa-linkedin-in"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="border-t border-gray-200 mt-6 pt-6 text-center text-gray-500 text-sm">
+                <p>© 2023 FileShare. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
 </body>
 </html>
 '''

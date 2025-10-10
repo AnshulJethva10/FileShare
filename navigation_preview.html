@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Navigation UI Preview - FileShare</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#4361ee',
+                        secondary: '#3f37c9',
+                        accent: '#4895ef',
+                        light: '#f8f9fa',
+                        dark: '#212529',
+                        success: '#4cc9f0',
+                        warning: '#f72585',
+                        danger: '#e63946'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+        body { 
+            font-family: 'Poppins', sans-serif; 
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4edf5 100%);
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body class="text-dark">
+    <!-- Navigation Header Preview -->
+    <header class="bg-white shadow-sm">
+        <div class="container mx-auto px-4 py-4">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-2">
+                    <div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
+                        <i class="fas fa-cloud-upload-alt text-white text-xl"></i>
+                    </div>
+                    <h1 class="text-2xl font-bold text-primary">File<span class="text-secondary">Share</span></h1>
+                </div>
+                
+                <!-- Desktop Navigation -->
+                <nav class="hidden md:flex space-x-6">
+                    <a href="#" class="text-primary font-medium border-b-2 border-primary pb-1 transition duration-300" id="homeTab">Home</a>
+                    <a href="#" class="text-gray-600 hover:text-primary transition duration-300" id="sharesTab">My Shares</a>
+                    <a href="#" class="text-gray-600 hover:text-primary transition duration-300">Settings</a>
+                </nav>
+                
+                <!-- Desktop User Menu -->
+                <div class="hidden md:flex items-center space-x-4">
+                    <span class="text-gray-600">Welcome, <strong>Demo User</strong></span>
+                    <button class="bg-danger hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition duration-300">
+                        <i class="fas fa-sign-out-alt mr-1"></i> Logout
+                    </button>
+                </div>
+                
+                <!-- Mobile Menu Button -->
+                <button id="mobileMenuBtn" class="md:hidden text-gray-600 hover:text-primary focus:outline-none">
+                    <i class="fas fa-bars text-xl"></i>
+                </button>
+            </div>
+            
+            <!-- Mobile Navigation Menu -->
+            <div id="mobileMenu" class="md:hidden hidden mt-4 pt-4 border-t border-gray-200">
+                <nav class="flex flex-col space-y-3">
+                    <a href="#" class="text-primary font-medium bg-blue-50 px-3 py-2 rounded-lg transition duration-300" id="mobileHomeTab">
+                        <i class="fas fa-home mr-2"></i>Home
+                    </a>
+                    <a href="#" class="text-gray-600 hover:text-primary px-3 py-2 transition duration-300" id="mobileSharesTab">
+                        <i class="fas fa-share-alt mr-2"></i>My Shares
+                    </a>
+                    <a href="#" class="text-gray-600 hover:text-primary px-3 py-2 transition duration-300">
+                        <i class="fas fa-cog mr-2"></i>Settings
+                    </a>
+                    <div class="border-t border-gray-200 pt-3 mt-3">
+                        <span class="text-gray-600 text-sm px-3 block mb-2">Welcome, <strong>Demo User</strong></span>
+                        <button class="bg-danger hover:bg-red-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition duration-300 inline-block">
+                            <i class="fas fa-sign-out-alt mr-1"></i> Logout
+                        </button>
+                    </div>
+                </nav>
+            </div>
+        </div>
+    </header>
+    
+    <!-- Demo Content -->
+    <main class="container mx-auto px-4 py-8">
+        <div class="max-w-4xl mx-auto">
+            <div class="bg-white rounded-2xl shadow-lg p-8">
+                <h2 class="text-3xl font-bold mb-6 text-center">✨ Navigation UI Improvements</h2>
+                
+                <div class="grid md:grid-cols-2 gap-8">
+                    <div class="space-y-4">
+                        <h3 class="text-xl font-semibold text-primary">🏠 Home Page Features</h3>
+                        <ul class="space-y-2 text-gray-700">
+                            <li class="flex items-center"><i class="fas fa-check-circle text-green-500 mr-2"></i> Active tab highlighting with border</li>
+                            <li class="flex items-center"><i class="fas fa-check-circle text-green-500 mr-2"></i> Consistent navigation header</li>
+                            <li class="flex items-center"><i class="fas fa-check-circle text-green-500 mr-2"></i> Easy access to My Shares</li>
+                            <li class="flex items-center"><i class="fas fa-check-circle text-green-500 mr-2"></i> Mobile-responsive design</li>
+                        </ul>
+                        
+                        <div class="mt-6">
+                            <button onclick="switchToHome()" class="bg-primary hover:bg-secondary text-white px-6 py-3 rounded-lg transition duration-300">
+                                <i class="fas fa-home mr-2"></i>View Home Page
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <h3 class="text-xl font-semibold text-primary">📤 My Shares Features</h3>
+                        <ul class="space-y-2 text-gray-700">
+                            <li class="flex items-center"><i class="fas fa-check-circle text-green-500 mr-2"></i> Same navigation as Home</li>
+                            <li class="flex items-center"><i class="fas fa-check-circle text-green-500 mr-2"></i> Active state on My Shares tab</li>
+                            <li class="flex items-center"><i class="fas fa-check-circle text-green-500 mr-2"></i> Consistent user experience</li>
+                            <li class="flex items-center"><i class="fas fa-check-circle text-green-500 mr-2"></i> Easy back to Home</li>
+                        </ul>
+                        
+                        <div class="mt-6">
+                            <button onclick="switchToShares()" class="bg-accent hover:bg-primary text-white px-6 py-3 rounded-lg transition duration-300">
+                                <i class="fas fa-share-alt mr-2"></i>View My Shares
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-8 p-6 bg-blue-50 rounded-lg">
+                    <h4 class="font-semibold text-blue-800 mb-2">📱 Mobile Navigation</h4>
+                    <p class="text-blue-700">Try resizing your browser window or clicking the menu button (☰) to see the responsive mobile navigation!</p>
+                </div>
+                
+                <div class="mt-6 text-center">
+                    <p class="text-gray-600">
+                        <strong>Current View:</strong> <span id="currentView" class="text-primary">Home Page</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <script>
+        // Mobile menu toggle
+        document.getElementById('mobileMenuBtn').addEventListener('click', function() {
+            const mobileMenu = document.getElementById('mobileMenu');
+            mobileMenu.classList.toggle('hidden');
+            const icon = this.querySelector('i');
+            if (mobileMenu.classList.contains('hidden')) {
+                icon.className = 'fas fa-bars text-xl';
+            } else {
+                icon.className = 'fas fa-times text-xl';
+            }
+        });
+        
+        // Tab switching demo
+        function switchToHome() {
+            // Desktop tabs
+            document.getElementById('homeTab').className = 'text-primary font-medium border-b-2 border-primary pb-1 transition duration-300';
+            document.getElementById('sharesTab').className = 'text-gray-600 hover:text-primary transition duration-300';
+            
+            // Mobile tabs
+            document.getElementById('mobileHomeTab').className = 'text-primary font-medium bg-blue-50 px-3 py-2 rounded-lg transition duration-300';
+            document.getElementById('mobileSharesTab').className = 'text-gray-600 hover:text-primary px-3 py-2 transition duration-300';
+            
+            document.getElementById('currentView').textContent = 'Home Page';
+        }
+        
+        function switchToShares() {
+            // Desktop tabs
+            document.getElementById('homeTab').className = 'text-gray-600 hover:text-primary transition duration-300';
+            document.getElementById('sharesTab').className = 'text-primary font-medium border-b-2 border-primary pb-1 transition duration-300';
+            
+            // Mobile tabs
+            document.getElementById('mobileHomeTab').className = 'text-gray-600 hover:text-primary px-3 py-2 transition duration-300';
+            document.getElementById('mobileSharesTab').className = 'text-primary font-medium bg-blue-50 px-3 py-2 rounded-lg transition duration-300';
+            
+            document.getElementById('currentView').textContent = 'My Shares Page';
+        }
+        
+        // Add click handlers to navigation links
+        document.getElementById('homeTab').addEventListener('click', (e) => { e.preventDefault(); switchToHome(); });
+        document.getElementById('sharesTab').addEventListener('click', (e) => { e.preventDefault(); switchToShares(); });
+        document.getElementById('mobileHomeTab').addEventListener('click', (e) => { e.preventDefault(); switchToHome(); });
+        document.getElementById('mobileSharesTab').addEventListener('click', (e) => { e.preventDefault(); switchToShares(); });
+    </script>
+</body>
+</html>
